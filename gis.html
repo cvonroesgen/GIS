@@ -3,19 +3,22 @@
 <head>
     <title>Path Plotter</title>
     <style>
+        :root {
+            --hover-stroke-width: 2;
+        }
         .vertex-circle {
             cursor: pointer;
         }
         .vertex-circle:hover {
             stroke: #333;
-            stroke-width: 2;
+            stroke-width: var(--hover-stroke-width);
         }
         .geojson-point {
             cursor: pointer;
         }
         .geojson-point:hover {
             stroke: #333;
-            stroke-width: 2;
+            stroke-width: var(--hover-stroke-width);
         }
         .tooltip {
             position: absolute;
@@ -531,6 +534,53 @@ function plotMultiplePathsWithGeoJSON(startLat, startLon, allSteps, colors, cont
             let viewBox = { x: 0, y: 0, w: svgWidth, h: svgHeight };
             const originalViewBox = { ...viewBox };
             
+            // Base sizes (at original zoom level)
+            const baseSizes = {
+                vertexCircle: 4,
+                vertexCircleStart: 5,
+                geojsonPoint: 6,
+                clickedMarker: 6,
+                polylineStroke: 2,
+                measureLineStroke: 3,
+                hoverStroke: 2
+            };
+            
+            // Update element sizes based on current zoom level
+            const updateElementSizes = () => {
+                const scale = viewBox.w / originalViewBox.w;
+                
+                // Update vertex circles
+                svg.querySelectorAll('.vertex-circle').forEach((circle, index) => {
+                    const isStart = circle.getAttribute('data-point') === '0';
+                    const baseRadius = isStart ? baseSizes.vertexCircleStart : baseSizes.vertexCircle;
+                    circle.setAttribute('r', baseRadius * scale);
+                });
+                
+                // Update GeoJSON points
+                svg.querySelectorAll('.geojson-point').forEach(circle => {
+                    circle.setAttribute('r', baseSizes.geojsonPoint * scale);
+                });
+                
+                // Update clicked markers
+                svg.querySelectorAll('.clicked-marker').forEach(circle => {
+                    circle.setAttribute('r', baseSizes.clickedMarker * scale);
+                });
+                
+                // Update polyline stroke widths
+                svg.querySelectorAll('polyline').forEach(polyline => {
+                    polyline.style.strokeWidth = baseSizes.polylineStroke * scale;
+                });
+                
+                // Update measure line stroke width
+                const measureLine = svg.querySelector('.measure-line');
+                if (measureLine) {
+                    measureLine.style.strokeWidth = baseSizes.measureLineStroke * scale;
+                }
+                
+                // Update hover stroke width CSS variable
+                document.documentElement.style.setProperty('--hover-stroke-width', baseSizes.hoverStroke * scale);
+            };
+            
             // Zoom with mouse wheel
             svg.addEventListener('wheel', (e) => {
                 e.preventDefault();
@@ -564,6 +614,7 @@ function plotMultiplePathsWithGeoJSON(startLat, startLon, allSteps, colors, cont
                 viewBox.h = newH;
                 
                 svg.setAttribute('viewBox', `${viewBox.x} ${viewBox.y} ${viewBox.w} ${viewBox.h}`);
+                updateElementSizes();
             });
             
             // --- Helper functions for coordinate conversion ---
@@ -642,12 +693,15 @@ function plotMultiplePathsWithGeoJSON(startLat, startLon, allSteps, colors, cont
                         
                         markerCount++;
                         
+                        // Calculate current scale for proper sizing
+                        const currentScale = viewBox.w / originalViewBox.w;
+                        
                         // Create marker circle
                         const marker = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
                         marker.classList.add('clicked-marker');
                         marker.setAttribute('cx', coords.x);
                         marker.setAttribute('cy', coords.y);
-                        marker.setAttribute('r', 6);
+                        marker.setAttribute('r', baseSizes.clickedMarker * currentScale);
                         marker.setAttribute('data-lat', geo.lat.toFixed(8));
                         marker.setAttribute('data-lon', geo.lon.toFixed(8));
                         marker.setAttribute('data-id', markerCount);
@@ -719,6 +773,23 @@ function plotMultiplePathsWithGeoJSON(startLat, startLon, allSteps, colors, cont
                 return distanceMiles * FEET_PER_MILE;
             };
             
+            // Calculate bearing from point 1 to point 2 in degrees
+            const calculateBearing = (lat1, lon1, lat2, lon2) => {
+                const toRad = deg => deg * (Math.PI / 180);
+                const toDeg = rad => rad * (180 / Math.PI);
+                
+                const dLon = toRad(lon2 - lon1);
+                const lat1Rad = toRad(lat1);
+                const lat2Rad = toRad(lat2);
+                
+                const y = Math.sin(dLon) * Math.cos(lat2Rad);
+                const x = Math.cos(lat1Rad) * Math.sin(lat2Rad) -
+                          Math.sin(lat1Rad) * Math.cos(lat2Rad) * Math.cos(dLon);
+                
+                let bearing = toDeg(Math.atan2(y, x));
+                return (bearing + 360) % 360; // Normalize to 0-360
+            };
+            
             // Format distance as feet and inches
             const formatDistance = (feet) => {
                 const wholeFeet = Math.floor(feet);
@@ -756,13 +827,14 @@ function plotMultiplePathsWithGeoJSON(startLat, startLon, allSteps, colors, cont
                 measureLine.setAttribute('x2', coords.x);
                 measureLine.setAttribute('y2', coords.y);
                 
-                // Calculate distance
+                // Calculate distance and bearing
                 const startGeo = toGeoCoords(measureStart.x, measureStart.y);
                 const endGeo = toGeoCoords(coords.x, coords.y);
                 const distanceFeet = calculateDistanceFeet(startGeo.lat, startGeo.lon, endGeo.lat, endGeo.lon);
+                const bearing = calculateBearing(startGeo.lat, startGeo.lon, endGeo.lat, endGeo.lon);
                 
-                // Update label
-                measureLabel.textContent = formatDistance(distanceFeet);
+                // Update label with distance and bearing
+                measureLabel.textContent = `${formatDistance(distanceFeet)} @ ${bearing.toFixed(1)}°`;
                 measureLabel.style.display = 'block';
                 measureLabel.style.left = (e.pageX + 20) + 'px';
                 measureLabel.style.top = (e.pageY - 10) + 'px';
@@ -965,7 +1037,7 @@ window.addEventListener('load', function() {
     console.log('The entire page, including all resources, has fully loaded!');
     
     // Apply the same bearing adjustment used for plotting
-    const bearingAdjustment = -14;
+    const bearingAdjustment = -13.7;
     const adjustedTravelSteps = travelSteps.map((step) => {
         const [bearing, distance] = step;
         const adjustedBearing = (bearing + bearingAdjustment) % 360;
