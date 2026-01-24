@@ -1,0 +1,1032 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Path Plotter</title>
+    <style>
+        .vertex-circle {
+            cursor: pointer;
+        }
+        .vertex-circle:hover {
+            stroke: #333;
+            stroke-width: 2;
+        }
+        .geojson-point {
+            cursor: pointer;
+        }
+        .geojson-point:hover {
+            stroke: #333;
+            stroke-width: 2;
+        }
+        .tooltip {
+            position: absolute;
+            background-color: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 5px 10px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-family: monospace;
+            pointer-events: none;
+            z-index: 1000;
+            white-space: nowrap;
+            display: none;
+        }
+        #svg-container {
+            overflow: hidden;
+        }
+        #svg-container svg {
+            cursor: grab;
+        }
+        #svg-container svg:active {
+            cursor: grabbing;
+        }
+        .measure-line {
+            stroke: #ff6600;
+            stroke-width: 3;
+            stroke-dasharray: 8, 4;
+            pointer-events: none;
+        }
+        .measure-label {
+            position: absolute;
+            background-color: rgba(255, 102, 0, 0.9);
+            color: white;
+            padding: 6px 10px;
+            border-radius: 4px;
+            font-size: 14px;
+            font-family: monospace;
+            font-weight: bold;
+            pointer-events: none;
+            z-index: 1001;
+            white-space: nowrap;
+            display: none;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+        }
+        .clicked-marker {
+            cursor: pointer;
+            fill: #9933ff;
+            stroke: white;
+            stroke-width: 2;
+        }
+        .clicked-marker:hover {
+            stroke: #333;
+            stroke-width: 3;
+        }
+        .marker-label {
+            font-size: 10px;
+            font-family: monospace;
+            fill: #333;
+            pointer-events: none;
+        }
+        #csv-display {
+            margin-top: 20px;
+            padding: 15px;
+            background-color: #f5f5f5;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            font-family: monospace;
+            font-size: 12px;
+            white-space: pre-line;
+            max-width: 400px;
+        }
+        #csv-display h3 {
+            margin: 0 0 10px 0;
+            font-family: sans-serif;
+        }
+        #geojson-display {
+            margin-top: 20px;
+            padding: 15px;
+            background-color: #f0f8ff;
+            border: 1px solid #4a90d9;
+            border-radius: 4px;
+            font-family: monospace;
+            font-size: 11px;
+            white-space: pre;
+            max-width: 600px;
+            max-height: 400px;
+            overflow: auto;
+        }
+        #geojson-display h3 {
+            margin: 0 0 10px 0;
+            font-family: sans-serif;
+            color: #2c5aa0;
+        }
+    </style>
+    <script>
+        // Paste 'calculatePath' and 'plotPathInSVG' functions here
+/**
+ * Calculates a series of destination points from a starting point
+ * based on an array of [distanceFeet, bearingDegrees] steps.
+ *
+ * @param {number} startLat - Initial latitude in degrees.
+ * @param {number} startLon - Initial longitude in degrees.
+ * @param {Array<Array<number>>} steps - Array of [distanceFeet, bearingDegrees] pairs.
+ * @returns {Array<{lat: number, lon: number}>} - Array of all path points (including start).
+ */
+function calculatePath(startLat, startLon, steps) {
+    const EARTH_RADIUS_MILES = 3958.8;
+    const FEET_PER_MILE = 5280;
+    const points = [{ lat: startLat, lon: startLon }];
+    let currentLat = startLat;
+    let currentLon = startLon;
+
+    const toRad = deg => deg * (Math.PI / 180);
+    const toDeg = rad => rad * (180 / Math.PI);
+
+    for (const [bearingDegrees, distanceFeet] of steps) {
+        const R = EARTH_RADIUS_MILES;
+        const d = distanceFeet / FEET_PER_MILE;
+
+        const latRad = toRad(currentLat);
+        const lonRad = toRad(currentLon);
+        const brngRad = toRad((bearingDegrees + 180) % 360);
+        const angularDistance = d / R;
+
+        const destLatRad = Math.asin(
+            Math.sin(latRad) * Math.cos(angularDistance) +
+            Math.cos(latRad) * Math.sin(angularDistance) * Math.cos(brngRad)
+        );
+
+        const destLonRad = lonRad + Math.atan2(
+            Math.sin(brngRad) * Math.sin(angularDistance) * Math.cos(latRad),
+            Math.cos(angularDistance) - Math.sin(latRad) * Math.sin(destLatRad)
+        );
+
+        currentLat = toDeg(destLatRad);
+        currentLon = toDeg(destLonRad);
+
+        points.push({ lat: currentLat, lon: currentLon });
+    }
+
+    return points;
+}
+/**
+ * Renders multiple geographic paths as SVG polylines on the same coordinate system.
+ *
+ * @param {number} startLat - Initial latitude in degrees.
+ * @param {number} startLon - Initial longitude in degrees.
+ * @param {Array<Array<Array<number>>>} allSteps - Array of step arrays for each path.
+ * @param {Array<string>} colors - Array of colors for each path.
+ * @param {string} containerId - The ID of the HTML element where the SVG will be placed.
+ * @param {number} svgWidth - The desired width of the SVG canvas.
+ * @param {number} svgHeight - The desired height of the SVG canvas.
+ * @param {Array<number>|number} bearingAdjustments - Array of degrees to add to bearings for each path, or single value for all paths (default: 0).
+ */
+function plotMultiplePathsInSVG(startLat, startLon, allSteps, colors, containerId, svgWidth, svgHeight, bearingAdjustments = 0) {
+    if (allSteps.length === 0) {
+        console.warn("No steps provided.");
+        return;
+    }
+    
+    // Normalize bearingAdjustments to an array
+    const adjustments = Array.isArray(bearingAdjustments) 
+        ? bearingAdjustments 
+        : new Array(allSteps.length).fill(bearingAdjustments);
+    
+    // Calculate paths with individual bearing adjustments
+    const allPaths = allSteps.map((steps, index) => {
+        const adjustment = adjustments[index] || 0;
+        const adjustedSteps = steps.map(([bearing, distance]) => {
+            const adjustedBearing = (bearing + adjustment + 360) % 360;
+            return [adjustedBearing, distance];
+        });
+        return calculatePath(startLat, startLon, adjustedSteps);
+    });
+    
+    // Flatten all points to calculate a combined bounding box
+    const allPoints = allPaths.flat();
+    
+    if (allPoints.length < 2) {
+        console.warn("Need at least two points total to draw paths.");
+        return;
+    }
+    
+    // --- 1. Determine Combined Bounding Box ---
+    const latitudes = allPoints.map(p => p.lat);
+    const longitudes = allPoints.map(p => p.lon);
+
+    const minLat = Math.min(...latitudes);
+    const maxLat = Math.max(...latitudes);
+    const minLon = Math.min(...longitudes);
+    const maxLon = Math.max(...longitudes);
+
+    const latRange = maxLat - minLat;
+    const lonRange = maxLon - minLon;
+    
+    // Use a padding factor to prevent the path from touching the edge
+    const padding = 0.1; 
+    const svgInnerWidth = svgWidth * (1 - 2 * padding);
+    const svgInnerHeight = svgHeight * (1 - 2 * padding);
+    const svgXOffset = svgWidth * padding;
+    const svgYOffset = svgHeight * padding;
+
+    // --- 2. Scaling Function (Projection) ---
+    const maxGeoRange = Math.max(latRange, lonRange) || 1; 
+    const scaleFactor = Math.min(svgInnerWidth, svgInnerHeight) / maxGeoRange;
+
+    // Convert Geo Coordinates to SVG Pixels
+    const toSVGPoint = (lat, lon) => {
+        const x = (lon - minLon) * scaleFactor + svgXOffset;
+        const y = svgHeight - ((lat - minLat) * scaleFactor + svgYOffset); 
+        return `${x.toFixed(2)},${y.toFixed(2)}`;
+    };
+
+    // --- 3. Generate SVG Markup for All Paths ---
+    let pathsMarkup = '';
+    
+    allPaths.forEach((pathPoints, index) => {
+        const pathColor = colors[index] || 'black';
+        const pointsString = pathPoints.map(p => toSVGPoint(p.lat, p.lon)).join(' ');
+        
+        // Draw the polyline
+        pathsMarkup += `
+            <polyline
+                points="${pointsString}"
+                style="fill:none; stroke:${pathColor}; stroke-width:2" />
+        `;
+        
+        // Draw circles at each vertex
+        pathPoints.forEach((p, pointIndex) => {
+            const svgCoords = toSVGPoint(p.lat, p.lon).split(',');
+            const cx = svgCoords[0];
+            const cy = svgCoords[1];
+            const radius = pointIndex === 0 ? 5 : 4; // Start point slightly larger
+            pathsMarkup += `
+            <circle class="vertex-circle" 
+                    cx="${cx}" 
+                    cy="${cy}" 
+                    r="${radius}" 
+                    fill="${pathColor}"
+                    data-lat="${p.lat.toFixed(8)}"
+                    data-lon="${p.lon.toFixed(8)}"
+                    data-path="${index + 1}"
+                    data-point="${pointIndex}" />
+            `;
+        });
+    });
+
+    // --- 4. Render to DOM ---
+    const container = document.getElementById(containerId);
+    if (container) {
+        container.innerHTML = `
+            <svg width="${svgWidth}" height="${svgHeight}" viewBox="0 0 ${svgWidth} ${svgHeight}" style="border: 1px solid #ccc;">
+                ${pathsMarkup}
+            </svg>
+        `;
+        
+        // Create tooltip element if it doesn't exist
+        let tooltip = document.getElementById('coord-tooltip');
+        if (!tooltip) {
+            tooltip = document.createElement('div');
+            tooltip.id = 'coord-tooltip';
+            tooltip.className = 'tooltip';
+            document.body.appendChild(tooltip);
+        }
+        
+        // Add event listeners to vertex circles
+        const circles = container.querySelectorAll('.vertex-circle');
+        circles.forEach(circle => {
+            circle.addEventListener('mouseenter', (e) => {
+                const lat = circle.getAttribute('data-lat');
+                const lon = circle.getAttribute('data-lon');
+                tooltip.innerHTML = `Lat: ${lat}<br>Lon: ${lon}`;
+                tooltip.style.display = 'block';
+            });
+            
+            circle.addEventListener('mousemove', (e) => {
+                tooltip.style.left = (e.pageX + 15) + 'px';
+                tooltip.style.top = (e.pageY + 15) + 'px';
+            });
+            
+            circle.addEventListener('mouseleave', () => {
+                tooltip.style.display = 'none';
+            });
+        });
+    } else {
+        console.error(`Container element with ID "${containerId}" not found.`);
+    }
+}
+
+/**
+ * Parses a GeoJSON FeatureCollection and extracts Point features.
+ *
+ * @param {string|Object} geoJSON - GeoJSON string or object.
+ * @returns {Array<{lat: number, lon: number, remarks: string}>} - Array of point objects.
+ */
+function parseGeoJSONPoints(geoJSON) {
+    const data = typeof geoJSON === 'string' ? JSON.parse(geoJSON) : geoJSON;
+    const points = [];
+    
+    if (data.type === 'FeatureCollection' && Array.isArray(data.features)) {
+        data.features.forEach(feature => {
+            if (feature.type === 'Feature' && 
+                feature.geometry && 
+                feature.geometry.type === 'Point' &&
+                Array.isArray(feature.geometry.coordinates)) {
+                const [lon, lat, elevation] = feature.geometry.coordinates;
+                const remarks = feature.properties?.REMARKS || '';
+                points.push({ lat, lon, elevation, remarks });
+            }
+        });
+    }
+    
+    return points;
+}
+
+/**
+ * Renders multiple geographic paths and GeoJSON points on the same SVG.
+ *
+ * @param {number} startLat - Initial latitude in degrees.
+ * @param {number} startLon - Initial longitude in degrees.
+ * @param {Array<Array<Array<number>>>} allSteps - Array of step arrays for each path.
+ * @param {Array<string>} colors - Array of colors for each path.
+ * @param {string} containerId - The ID of the HTML element where the SVG will be placed.
+ * @param {number} svgWidth - The desired width of the SVG canvas.
+ * @param {number} svgHeight - The desired height of the SVG canvas.
+ * @param {Array<number>|number} bearingAdjustments - Bearing adjustments for paths.
+ * @param {string|Object} geoJSON - Optional GeoJSON data to plot.
+ * @param {string} geoJSONColor - Color for GeoJSON points (default: 'green').
+ */
+function plotMultiplePathsWithGeoJSON(startLat, startLon, allSteps, colors, containerId, svgWidth, svgHeight, bearingAdjustments = 0, geoJSON = null, geoJSONColor = 'green') {
+    // Normalize bearingAdjustments to an array
+    const adjustments = Array.isArray(bearingAdjustments) 
+        ? bearingAdjustments 
+        : new Array(allSteps.length).fill(bearingAdjustments);
+    
+    // Calculate paths with individual bearing adjustments
+    const allPaths = allSteps.map((steps, index) => {
+        const adjustment = adjustments[index] || 0;
+        const adjustedSteps = steps.map(([bearing, distance]) => {
+            const adjustedBearing = (bearing + adjustment + 360) % 360;
+            return [adjustedBearing, distance];
+        });
+        return calculatePath(startLat, startLon, adjustedSteps);
+    });
+    
+    // Parse GeoJSON points if provided
+    const geoJSONPoints = geoJSON ? parseGeoJSONPoints(geoJSON) : [];
+    
+    // Flatten all points to calculate a combined bounding box
+    const allPathPoints = allPaths.flat();
+    const allPoints = [...allPathPoints, ...geoJSONPoints.map(p => ({ lat: p.lat, lon: p.lon }))];
+    
+    if (allPoints.length < 1) {
+        console.warn("Need at least one point to draw.");
+        return;
+    }
+    
+    // --- 1. Determine Combined Bounding Box ---
+    const latitudes = allPoints.map(p => p.lat);
+    const longitudes = allPoints.map(p => p.lon);
+
+    const minLat = Math.min(...latitudes);
+    const maxLat = Math.max(...latitudes);
+    const minLon = Math.min(...longitudes);
+    const maxLon = Math.max(...longitudes);
+
+    const latRange = maxLat - minLat;
+    const lonRange = maxLon - minLon;
+    
+    // Use a padding factor to prevent the path from touching the edge
+    const padding = 0.1; 
+    const svgInnerWidth = svgWidth * (1 - 2 * padding);
+    const svgInnerHeight = svgHeight * (1 - 2 * padding);
+    const svgXOffset = svgWidth * padding;
+    const svgYOffset = svgHeight * padding;
+
+    // --- 2. Scaling Function (Projection) ---
+    const maxGeoRange = Math.max(latRange, lonRange) || 1; 
+    const scaleFactor = Math.min(svgInnerWidth, svgInnerHeight) / maxGeoRange;
+
+    // Convert Geo Coordinates to SVG Pixels
+    const toSVGPoint = (lat, lon) => {
+        const x = (lon - minLon) * scaleFactor + svgXOffset;
+        const y = svgHeight - ((lat - minLat) * scaleFactor + svgYOffset); 
+        return `${x.toFixed(2)},${y.toFixed(2)}`;
+    };
+
+    // --- 3. Generate SVG Markup for All Paths ---
+    let pathsMarkup = '';
+    
+    allPaths.forEach((pathPoints, index) => {
+        const pathColor = colors[index] || 'black';
+        const pointsString = pathPoints.map(p => toSVGPoint(p.lat, p.lon)).join(' ');
+        
+        // Draw the polyline
+        pathsMarkup += `
+            <polyline
+                points="${pointsString}"
+                style="fill:none; stroke:${pathColor}; stroke-width:2" />
+        `;
+        
+        // Draw circles at each vertex
+        pathPoints.forEach((p, pointIndex) => {
+            const svgCoords = toSVGPoint(p.lat, p.lon).split(',');
+            const cx = svgCoords[0];
+            const cy = svgCoords[1];
+            const radius = pointIndex === 0 ? 5 : 4;
+            pathsMarkup += `
+            <circle class="vertex-circle" 
+                    cx="${cx}" 
+                    cy="${cy}" 
+                    r="${radius}" 
+                    fill="${pathColor}"
+                    data-lat="${p.lat.toFixed(8)}"
+                    data-lon="${p.lon.toFixed(8)}"
+                    data-path="${index + 1}"
+                    data-point="${pointIndex}" />
+            `;
+        });
+    });
+    
+    // --- 4. Generate SVG Markup for GeoJSON Points ---
+    geoJSONPoints.forEach((p, index) => {
+        const svgCoords = toSVGPoint(p.lat, p.lon).split(',');
+        const cx = svgCoords[0];
+        const cy = svgCoords[1];
+        const escapedRemarks = (p.remarks || '').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+        pathsMarkup += `
+            <circle class="geojson-point" 
+                    cx="${cx}" 
+                    cy="${cy}" 
+                    r="6" 
+                    fill="${geoJSONColor}"
+                    data-lat="${p.lat.toFixed(8)}"
+                    data-lon="${p.lon.toFixed(8)}"
+                    data-elevation="${p.elevation ? p.elevation.toFixed(3) : ''}"
+                    data-remarks="${escapedRemarks}"
+                    data-index="${index}" />
+        `;
+    });
+
+    // --- 5. Render to DOM ---
+    const container = document.getElementById(containerId);
+    if (container) {
+        container.innerHTML = `
+            <svg width="${svgWidth}" height="${svgHeight}" viewBox="0 0 ${svgWidth} ${svgHeight}" style="border: 1px solid #ccc;">
+                ${pathsMarkup}
+            </svg>
+        `;
+        
+        // Create tooltip element if it doesn't exist
+        let tooltip = document.getElementById('coord-tooltip');
+        if (!tooltip) {
+            tooltip = document.createElement('div');
+            tooltip.id = 'coord-tooltip';
+            tooltip.className = 'tooltip';
+            document.body.appendChild(tooltip);
+        }
+        
+        // Add event listeners to vertex circles
+        const vertexCircles = container.querySelectorAll('.vertex-circle');
+        vertexCircles.forEach(circle => {
+            circle.addEventListener('mouseenter', (e) => {
+                const lat = circle.getAttribute('data-lat');
+                const lon = circle.getAttribute('data-lon');
+                tooltip.innerHTML = `Lat: ${lat}<br>Lon: ${lon}`;
+                tooltip.style.display = 'block';
+            });
+            
+            circle.addEventListener('mousemove', (e) => {
+                tooltip.style.left = (e.pageX + 15) + 'px';
+                tooltip.style.top = (e.pageY + 15) + 'px';
+            });
+            
+            circle.addEventListener('mouseleave', () => {
+                tooltip.style.display = 'none';
+            });
+        });
+        
+        // Add event listeners to GeoJSON points
+        const geoJSONCircles = container.querySelectorAll('.geojson-point');
+        geoJSONCircles.forEach(circle => {
+            circle.addEventListener('mouseenter', (e) => {
+                const lat = circle.getAttribute('data-lat');
+                const lon = circle.getAttribute('data-lon');
+                const elevation = circle.getAttribute('data-elevation');
+                const remarks = circle.getAttribute('data-remarks');
+                let html = `Lat: ${lat}<br>Lon: ${lon}`;
+                if (elevation) {
+                    html += `<br>Elev: ${elevation}`;
+                }
+                if (remarks) {
+                    html += `<br>Remarks: ${remarks}`;
+                }
+                tooltip.innerHTML = html;
+                tooltip.style.display = 'block';
+            });
+            
+            circle.addEventListener('mousemove', (e) => {
+                tooltip.style.left = (e.pageX + 15) + 'px';
+                tooltip.style.top = (e.pageY + 15) + 'px';
+            });
+            
+            circle.addEventListener('mouseleave', () => {
+                tooltip.style.display = 'none';
+            });
+        });
+        
+        // --- 6. Add Zoom and Pan functionality ---
+        const svg = container.querySelector('svg');
+        if (svg) {
+            // Store original viewBox values
+            let viewBox = { x: 0, y: 0, w: svgWidth, h: svgHeight };
+            const originalViewBox = { ...viewBox };
+            
+            // Zoom with mouse wheel
+            svg.addEventListener('wheel', (e) => {
+                e.preventDefault();
+                
+                const zoomFactor = 0.1;
+                const direction = e.deltaY > 0 ? 1 : -1; // positive = zoom out, negative = zoom in
+                const zoom = 1 + direction * zoomFactor;
+                
+                // Get mouse position relative to SVG
+                const rect = svg.getBoundingClientRect();
+                const mouseX = e.clientX - rect.left;
+                const mouseY = e.clientY - rect.top;
+                
+                // Convert mouse position to viewBox coordinates
+                const svgMouseX = viewBox.x + (mouseX / rect.width) * viewBox.w;
+                const svgMouseY = viewBox.y + (mouseY / rect.height) * viewBox.h;
+                
+                // Calculate new viewBox dimensions
+                const newW = viewBox.w * zoom;
+                const newH = viewBox.h * zoom;
+                
+                // Limit zoom (don't zoom out beyond original, limit zoom in)
+                if (newW > originalViewBox.w * 2 || newW < originalViewBox.w * 0.05) {
+                    return;
+                }
+                
+                // Adjust viewBox position to zoom towards mouse cursor
+                viewBox.x = svgMouseX - (mouseX / rect.width) * newW;
+                viewBox.y = svgMouseY - (mouseY / rect.height) * newH;
+                viewBox.w = newW;
+                viewBox.h = newH;
+                
+                svg.setAttribute('viewBox', `${viewBox.x} ${viewBox.y} ${viewBox.w} ${viewBox.h}`);
+            });
+            
+            // --- Helper functions for coordinate conversion ---
+            // Store geo mapping info for distance calculation
+            const geoMapping = {
+                minLat, minLon, scaleFactor, svgXOffset, svgYOffset, svgHeight
+            };
+            
+            // Convert SVG coordinates to geo coordinates
+            const toGeoCoords = (svgX, svgY) => {
+                const lon = (svgX - geoMapping.svgXOffset) / geoMapping.scaleFactor + geoMapping.minLon;
+                const lat = (geoMapping.svgHeight - svgY - geoMapping.svgYOffset) / geoMapping.scaleFactor + geoMapping.minLat;
+                return { lat, lon };
+            };
+            
+            // Get SVG coordinates from mouse event (accounting for viewBox)
+            const getSVGCoords = (e) => {
+                const rect = svg.getBoundingClientRect();
+                const mouseX = e.clientX - rect.left;
+                const mouseY = e.clientY - rect.top;
+                const svgX = viewBox.x + (mouseX / rect.width) * viewBox.w;
+                const svgY = viewBox.y + (mouseY / rect.height) * viewBox.h;
+                return { x: svgX, y: svgY };
+            };
+            
+            // Pan with mouse drag
+            let isPanning = false;
+            let startPoint = { x: 0, y: 0 };
+            let startViewBox = { ...viewBox };
+            let hasDragged = false;
+            const dragThreshold = 5; // pixels
+            
+            // Container for user-placed markers
+            let markersGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+            markersGroup.id = 'user-markers';
+            svg.appendChild(markersGroup);
+            let markerCount = 0;
+            
+            svg.addEventListener('mousedown', (e) => {
+                if (e.button === 0) { // Left mouse button
+                    isPanning = true;
+                    hasDragged = false;
+                    startPoint = { x: e.clientX, y: e.clientY };
+                    startViewBox = { ...viewBox };
+                    svg.style.cursor = 'grabbing';
+                }
+            });
+            
+            svg.addEventListener('mousemove', (e) => {
+                if (!isPanning) return;
+                
+                const dx = e.clientX - startPoint.x;
+                const dy = e.clientY - startPoint.y;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                
+                if (distance > dragThreshold) {
+                    hasDragged = true;
+                }
+                
+                const rect = svg.getBoundingClientRect();
+                const dxViewBox = (e.clientX - startPoint.x) * (viewBox.w / rect.width);
+                const dyViewBox = (e.clientY - startPoint.y) * (viewBox.h / rect.height);
+                
+                viewBox.x = startViewBox.x - dxViewBox;
+                viewBox.y = startViewBox.y - dyViewBox;
+                
+                svg.setAttribute('viewBox', `${viewBox.x} ${viewBox.y} ${viewBox.w} ${viewBox.h}`);
+            });
+            
+            svg.addEventListener('mouseup', (e) => {
+                if (e.button === 0) {
+                    if (!hasDragged) {
+                        // This was a click, not a drag - place a marker
+                        const coords = getSVGCoords(e);
+                        const geo = toGeoCoords(coords.x, coords.y);
+                        
+                        markerCount++;
+                        
+                        // Create marker circle
+                        const marker = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+                        marker.classList.add('clicked-marker');
+                        marker.setAttribute('cx', coords.x);
+                        marker.setAttribute('cy', coords.y);
+                        marker.setAttribute('r', 6);
+                        marker.setAttribute('data-lat', geo.lat.toFixed(8));
+                        marker.setAttribute('data-lon', geo.lon.toFixed(8));
+                        marker.setAttribute('data-id', markerCount);
+                        
+                        // Create label
+                        const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+                        label.classList.add('marker-label');
+                        label.setAttribute('x', coords.x + 10);
+                        label.setAttribute('y', coords.y + 4);
+                        label.innerHTML = `Lat: ${geo.lat.toFixed(6)}<tspan x="${coords.x + 10}" dy="12">Lon: ${geo.lon.toFixed(6)}</tspan>`;
+                        
+                        markersGroup.appendChild(marker);
+                        markersGroup.appendChild(label);
+                        
+                        // Add click handler to remove marker
+                        marker.addEventListener('click', (evt) => {
+                            evt.stopPropagation();
+                            markersGroup.removeChild(marker);
+                            markersGroup.removeChild(label);
+                        });
+                    }
+                    isPanning = false;
+                    svg.style.cursor = 'grab';
+                }
+            });
+            
+            svg.addEventListener('mouseleave', () => {
+                isPanning = false;
+                svg.style.cursor = 'grab';
+            });
+            
+            // Double-click to reset zoom
+            svg.addEventListener('dblclick', () => {
+                viewBox = { ...originalViewBox };
+                svg.setAttribute('viewBox', `${viewBox.x} ${viewBox.y} ${viewBox.w} ${viewBox.h}`);
+            });
+            
+            // --- 7. Distance Measurement with Right-Click Drag ---
+            // Create measurement elements
+            let measureLine = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+            measureLine.classList.add('measure-line');
+            measureLine.style.display = 'none';
+            svg.appendChild(measureLine);
+            
+            let measureLabel = document.getElementById('measure-label');
+            if (!measureLabel) {
+                measureLabel = document.createElement('div');
+                measureLabel.id = 'measure-label';
+                measureLabel.className = 'measure-label';
+                document.body.appendChild(measureLabel);
+            }
+            
+            let isMeasuring = false;
+            let measureStart = { x: 0, y: 0 };
+            
+            // Calculate distance between two geo points in feet
+            const calculateDistanceFeet = (lat1, lon1, lat2, lon2) => {
+                const EARTH_RADIUS_MILES = 3958.8;
+                const FEET_PER_MILE = 5280;
+                const toRad = deg => deg * (Math.PI / 180);
+                
+                const dLat = toRad(lat2 - lat1);
+                const dLon = toRad(lon2 - lon1);
+                const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+                          Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
+                          Math.sin(dLon/2) * Math.sin(dLon/2);
+                const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+                const distanceMiles = EARTH_RADIUS_MILES * c;
+                return distanceMiles * FEET_PER_MILE;
+            };
+            
+            // Format distance as feet and inches
+            const formatDistance = (feet) => {
+                const wholeFeet = Math.floor(feet);
+                const inches = Math.round((feet - wholeFeet) * 12);
+                if (inches === 12) {
+                    return `${wholeFeet + 1}' 0"`;
+                }
+                return `${wholeFeet}' ${inches}"`;
+            };
+            
+            // Prevent context menu on right-click
+            svg.addEventListener('contextmenu', (e) => {
+                e.preventDefault();
+            });
+            
+            svg.addEventListener('mousedown', (e) => {
+                if (e.button === 2) { // Right mouse button
+                    e.preventDefault();
+                    isMeasuring = true;
+                    const coords = getSVGCoords(e);
+                    measureStart = coords;
+                    
+                    measureLine.setAttribute('x1', coords.x);
+                    measureLine.setAttribute('y1', coords.y);
+                    measureLine.setAttribute('x2', coords.x);
+                    measureLine.setAttribute('y2', coords.y);
+                    measureLine.style.display = 'block';
+                }
+            });
+            
+            svg.addEventListener('mousemove', (e) => {
+                if (!isMeasuring) return;
+                
+                const coords = getSVGCoords(e);
+                measureLine.setAttribute('x2', coords.x);
+                measureLine.setAttribute('y2', coords.y);
+                
+                // Calculate distance
+                const startGeo = toGeoCoords(measureStart.x, measureStart.y);
+                const endGeo = toGeoCoords(coords.x, coords.y);
+                const distanceFeet = calculateDistanceFeet(startGeo.lat, startGeo.lon, endGeo.lat, endGeo.lon);
+                
+                // Update label
+                measureLabel.textContent = formatDistance(distanceFeet);
+                measureLabel.style.display = 'block';
+                measureLabel.style.left = (e.pageX + 20) + 'px';
+                measureLabel.style.top = (e.pageY - 10) + 'px';
+            });
+            
+            const stopMeasuring = () => {
+                if (isMeasuring) {
+                    isMeasuring = false;
+                    measureLine.style.display = 'none';
+                    measureLabel.style.display = 'none';
+                }
+            };
+            
+            svg.addEventListener('mouseup', (e) => {
+                if (e.button === 2) {
+                    stopMeasuring();
+                }
+            });
+            
+            svg.addEventListener('mouseleave', () => {
+                stopMeasuring();
+            });
+        }
+    } else {
+        console.error(`Container element with ID "${containerId}" not found.`);
+    }
+}
+
+/**
+ * Renders a geographic path (array of lat/lon points) as an SVG polyline.
+ *
+ * @param {Array<{lat: number, lon: number}>} pathPoints - The array of calculated path points.
+ * @param {string} containerId - The ID of the HTML element where the SVG will be placed.
+ * @param {number} svgWidth - The desired width of the SVG canvas.
+ * @param {number} svgHeight - The desired height of the SVG canvas.
+ * @param {string} pathColor - The color for the path line (default: 'blue').
+ */
+function plotPathInSVG(pathPoints, containerId, svgWidth, svgHeight, pathColor = 'blue') {
+    if (pathPoints.length < 2) {
+        console.warn("Need at least two points to draw a path.");
+        return;
+    }
+    
+    // --- 1. Determine Bounding Box (Min/Max Coordinates) ---
+    const latitudes = pathPoints.map(p => p.lat);
+    const longitudes = pathPoints.map(p => p.lon);
+
+    const minLat = Math.min(...latitudes);
+    const maxLat = Math.max(...latitudes);
+    const minLon = Math.min(...longitudes);
+    const maxLon = Math.max(...longitudes);
+
+    const latRange = maxLat - minLat;
+    const lonRange = maxLon - minLon;
+    
+    // Use a padding factor to prevent the path from touching the edge
+    const padding = 0.1; 
+    const svgInnerWidth = svgWidth * (1 - 2 * padding);
+    const svgInnerHeight = svgHeight * (1 - 2 * padding);
+    const svgXOffset = svgWidth * padding;
+    const svgYOffset = svgHeight * padding;
+
+
+    // --- 2. Scaling Function (Projection) ---
+    // Scale factor is based on the largest geographic range (lat or lon) 
+    // to maintain aspect ratio and prevent distortion.
+    const maxGeoRange = Math.max(latRange, lonRange) || 1; 
+    const scaleFactor = Math.min(svgInnerWidth, svgInnerHeight) / maxGeoRange;
+
+    // Convert Geo Coordinates to SVG Pixels
+    const toSVGPoint = (lat, lon) => {
+        // X: Lon translated and scaled.
+        const x = (lon - minLon) * scaleFactor + svgXOffset;
+        
+        // Y: Lat translated and scaled. Y axis is inverted in SVG (0 at top).
+        // MaxLat (North) should be at the top (low Y value).
+        const y = svgHeight - ((lat - minLat) * scaleFactor + svgYOffset); 
+        
+        return `${x.toFixed(2)},${y.toFixed(2)}`;
+    };
+
+
+    // --- 3. Generate SVG Markup ---
+    const pointsString = pathPoints.map(p => toSVGPoint(p.lat, p.lon)).join(' ');
+
+    let polylineMarkup = `
+            <polyline
+                points="${pointsString}"
+                style="fill:none; stroke:${pathColor}; stroke-width:2" />
+    `;
+    
+    // Add circles at each vertex
+    pathPoints.forEach((p, pointIndex) => {
+        const svgCoords = toSVGPoint(p.lat, p.lon).split(',');
+        const cx = svgCoords[0];
+        const cy = svgCoords[1];
+        const radius = pointIndex === 0 ? 5 : 4;
+        polylineMarkup += `
+            <circle class="vertex-circle" 
+                    cx="${cx}" 
+                    cy="${cy}" 
+                    r="${radius}" 
+                    fill="${pathColor}"
+                    data-lat="${p.lat.toFixed(8)}"
+                    data-lon="${p.lon.toFixed(8)}"
+                    data-point="${pointIndex}" />
+        `;
+    });
+
+    // --- 4. Render to DOM ---
+    const container = document.getElementById(containerId);
+    if (container) {
+        if (container.innerHTML === '') {
+            // Create initial SVG container
+            container.innerHTML = `
+                <svg width="${svgWidth}" height="${svgHeight}" viewBox="0 0 ${svgWidth} ${svgHeight}" style="border: 1px solid #ccc;">
+                    ${polylineMarkup}
+                </svg>
+            `;
+        } else {
+            // Append to existing SVG
+            const svg = container.querySelector('svg');
+            if (svg) {
+                svg.innerHTML += polylineMarkup;
+            }
+        }
+        
+        // Create tooltip element if it doesn't exist
+        let tooltip = document.getElementById('coord-tooltip');
+        if (!tooltip) {
+            tooltip = document.createElement('div');
+            tooltip.id = 'coord-tooltip';
+            tooltip.className = 'tooltip';
+            document.body.appendChild(tooltip);
+        }
+        
+        // Add event listeners to vertex circles
+        const circles = container.querySelectorAll('.vertex-circle');
+        circles.forEach(circle => {
+            circle.addEventListener('mouseenter', (e) => {
+                const lat = circle.getAttribute('data-lat');
+                const lon = circle.getAttribute('data-lon');
+                tooltip.innerHTML = `Lat: ${lat}<br>Lon: ${lon}`;
+                tooltip.style.display = 'block';
+            });
+            
+            circle.addEventListener('mousemove', (e) => {
+                tooltip.style.left = (e.pageX + 15) + 'px';
+                tooltip.style.top = (e.pageY + 15) + 'px';
+            });
+            
+            circle.addEventListener('mouseleave', () => {
+                tooltip.style.display = 'none';
+            });
+        });
+    } else {
+        console.error(`Container element with ID "${containerId}" not found.`);
+    }
+}
+        // --- Example Data ---
+        // Start: An arbitrary point
+        const initialLat = 42.525694405; // 121 Page Brook Rd
+        const initialLon = -71.324314395;
+        
+        // Steps: [Bearing in Degrees, Distance in Feet]
+        const travelSteps = [
+            [288.2061111111,	170.950000000000000],
+            [257.2422222222,	58.310000000000000],
+            [306.6427777778,	218.960000000000000],
+            [187.0708333333,	111.000000000000000],
+            [119.9402777778,	96.260000000000000],
+            [230.8472222222,	96.440000000000000],
+            [267.9361111111,	154.590000000000000],
+            [141.1083333333,	250.000000000000000],
+            [97.2472222222,	115.240000000000000],
+            [48.6777777778,	388.900000000000000]
+        ];
+        /* const travelStepsGIS = [   
+            [284.1000000000,	169.980000000000000],
+            [255.7000000000,	58.170000000000000],
+            [293.2000000000,	218.870000000000000],
+            [165.0000000000,	111.810000000000000],
+            [116.0000000000,	96.160000000000000],
+            [223.3000000000,	122.880000000000000],
+            [251.0000000000,	157.970000000000000],
+            [126.9000000000,	250.000000000000000],
+            [83.6000000000,	116.530000000000000],
+            [36.6000000000,	387.150000000000000]
+]; */
+        // 1. Calculate the geographic coordinates for the path (for logging purposes)
+        const pathCoordinates = calculatePath(initialLat, initialLon, travelSteps);
+        //const pathCoordinatesGIS = calculatePath(initialLat, initialLon, travelStepsGIS);
+        console.log("Calculated Path Coordinates:", pathCoordinates);
+        
+        // GeoJSON data for boundary points
+        const boundsGeoJSON = {"type":"FeatureCollection","name":"bounds","features":[{"type":"Feature","properties":{"REMARKS":"Gary's lot corner with Dave thomas"},"geometry":{"type":"Point","coordinates":[-71.325258936,42.525833647,9.198]}},{"type":"Feature","properties":{"REMARKS":"concrete bound at aouth eastern corner "},"geometry":{"type":"Point","coordinates":[-71.322791944,42.525827943,20.493]}},{"type":"Feature","properties":{"REMARKS":"iron pipe at top of old driveway"},"geometry":{"type":"Point","coordinates":[-71.32313197,42.525878072,17.855]}},{"type":"Feature","properties":{"REMARKS":"concrete bound on Gary's property"},"geometry":{"type":"Point","coordinates":[-71.324478706,42.526158835,18.594]}},{"type":"Feature","properties":{"REMARKS":"concrete bound on Dave Thomas's property"},"geometry":{"type":"Point","coordinates":[-71.325493657,42.52588362,17.87]}},{"type":"Feature","properties":{"REMARKS":"concrete bound on Thomas land"},"geometry":{"type":"Point","coordinates":[-71.325520417,42.525798633,13.8]}},{"type":"Feature","properties":{"REMARKS":"rtk fix on bound closest to mailbox"},"geometry":{"type":"Point","coordinates":[-71.324314741,42.525695171,14.137]}},{"type":"Feature","properties":{"REMARKS":"RTK corner near Keith McKenzie"},"geometry":{"type":"Point","coordinates":[-71.322824405,42.5258133,19.3]}},{"type":"Feature","properties":{"REMARKS":"bound on Gary's land using rtk"},"geometry":{"type":"Point","coordinates":[-71.324484635,42.52616642,23.553]}},{"type":"Feature","properties":{"REMARKS":"on the western border using rtk but in the GPS mode"},"geometry":{"type":"Point","coordinates":[-71.323766498,42.526312095,25.315]}},{"type":"Feature","properties":{"REMARKS":"beer can on Western bound"},"geometry":{"type":"Point","coordinates":[-71.323713615,42.526358518,25.209]}},{"type":"Feature","properties":{"REMARKS":"surveyor stake rtk float on Western foundry"},"geometry":{"type":"Point","coordinates":[-71.323752012,42.526314932,28.104]}},{"type":"Feature","properties":{"REMARKS":""},"geometry":{"type":"Point","coordinates":[-71.323759458,42.526310185,28.031]}},{"type":"Feature","properties":{"REMARKS":"by grave corner"},"geometry":{"type":"Point","coordinates":[-71.323528332,42.526585205,10.946]}},{"type":"Feature","properties":{"REMARKS":"rtk fix near mailbox"},"geometry":{"type":"Point","coordinates":[-71.324314395,42.525694405,16.015]}},{"type":"Feature","properties":{"REMARKS":"averaging rtk float"},"geometry":{"type":"Point","coordinates":[-71.32447867,42.52617183,23.719]}},{"type":"Feature","properties":{"REMARKS":"rtk float near mailbox"},"geometry":{"type":"Point","coordinates":[-71.324305337,42.525699207,18.426]}},{"type":"Feature","properties":{"REMARKS":"land court bound near McKenzie rtk float"},"geometry":{"type":"Point","coordinates":[-71.32282535,42.525813905,26.082]}},{"type":"Feature","properties":{"REMARKS":"White fiberglass stake near well"},"geometry":{"type":"Point","coordinates":[-71.322889737,42.526077027,20.511]}},{"type":"Feature","properties":{"REMARKS":"corner at top of driveway rtk float"},"geometry":{"type":"Point","coordinates":[-71.323134415,42.525883873,22.344]}},{"type":"Feature","properties":{"REMARKS":""},"geometry":{"type":"Point","coordinates":[-71.324310265,42.52570087,18.792]}},{"type":"Feature","properties":{"REMARKS":"gary"},"geometry":{"type":"Point","coordinates":[-71.324495297,42.526164678,22.589]}},{"type":"Feature","properties":{"REMARKS":""},"geometry":{"type":"Point","coordinates":[-71.32449542,42.526164608,22.583]}},{"type":"Feature","properties":{"REMARKS":""},"geometry":{"type":"Point","coordinates":[-71.32449583,42.526164792,22.598]}},{"type":"Feature","properties":{"REMARKS":""},"geometry":{"type":"Point","coordinates":[-71.322828612,42.525812508,26.956]}},{"type":"Feature","properties":{"REMARKS":""},"geometry":{"type":"Point","coordinates":[-71.32282877,42.525811073,26.371]}},{"type":"Feature","properties":{"REMARKS":""},"geometry":{"type":"Point","coordinates":[-71.322824473,42.525811035,25.378]}},{"type":"Feature","properties":{"REMARKS":""},"geometry":{"type":"Point","coordinates":[-71.32313224,42.525877985,21.619]}},{"type":"Feature","properties":{"REMARKS":""},"geometry":{"type":"Point","coordinates":[-71.322883263,42.526067095,19.29]}}]};
+
+window.addEventListener('load', function() {
+    // Your JavaScript code here will run after ALL resources on the page are loaded.
+    console.log('The entire page, including all resources, has fully loaded!');
+    
+    // Apply the same bearing adjustment used for plotting
+    const bearingAdjustment = -14;
+    const adjustedTravelSteps = travelSteps.map((step) => {
+        const [bearing, distance] = step;
+        const adjustedBearing = (bearing + bearingAdjustment) % 360;
+        return [adjustedBearing, distance];
+    });
+    const adjustedPathCoordinates = calculatePath(initialLat, initialLon, adjustedTravelSteps);
+    
+    // Log the adjusted coordinates to verify
+    console.log("Adjusted Path Coordinates:", adjustedPathCoordinates);
+    
+    // 2. Plot using the pre-calculated adjusted path coordinates directly
+    // Pass the adjusted steps so the plot function calculates the same coordinates
+    plotMultiplePathsWithGeoJSON(initialLat, initialLon, [adjustedTravelSteps], ['blue'], "svg-container", 3000, 2000, [0], boundsGeoJSON, 'green');
+    
+    // 3. Populate CSV display with path vertices (using adjusted coordinates)
+    const csvDisplay = document.getElementById('csv-content');
+    if (csvDisplay) {
+        let csvText = 'Lat, Lon, Alt\n';
+        adjustedPathCoordinates.forEach((point, index) => {
+            // Alt is 0 since calculatePath doesn't track altitude
+            csvText += `${point.lat.toFixed(8)}, ${point.lon.toFixed(8)}, 0\n`;
+        });
+        csvDisplay.textContent = csvText;
+    }
+    
+    // 4. Populate GeoJSON display with path vertices (using adjusted coordinates)
+    const geojsonDisplay = document.getElementById('geojson-content');
+    if (geojsonDisplay) {
+        const geoJSON = {
+            type: "FeatureCollection",
+            name: "pathVertices",
+            features: adjustedPathCoordinates.map((point, index) => ({
+                type: "Feature",
+                properties: {
+                    vertexIndex: index,
+                    REMARKS: index === 0 ? "Start point" : `Vertex ${index}`
+                },
+                geometry: {
+                    type: "Point",
+                    coordinates: [parseFloat(point.lon.toFixed(8)), parseFloat(point.lat.toFixed(8)), 0]
+                }
+            }))
+        };
+        geojsonDisplay.textContent = JSON.stringify(geoJSON, null, 2);
+    }
+});
+        
+    </script>
+</head>
+<body>
+    <h1>Calculated Path Plot</h1>
+    <div id="svg-container"></div>
+    
+    <div id="csv-display">
+        <h3>Path Vertices (CSV)</h3>
+        <pre id="csv-content"></pre>
+    </div>
+    
+    <div id="geojson-display">
+        <h3>Path Vertices (GeoJSON)</h3>
+        <pre id="geojson-content"></pre>
+    </div>
+</body>
+</html>
