@@ -112,6 +112,22 @@
             font-family: sans-serif;
             color: #2c5aa0;
         }
+        .area-label {
+            font-size: 14px;
+            font-family: sans-serif;
+            font-weight: bold;
+            fill: #0066cc;
+            text-anchor: middle;
+            dominant-baseline: middle;
+            pointer-events: none;
+        }
+        .area-label-bg {
+            fill: rgba(255, 255, 255, 0.85);
+            stroke: #0066cc;
+            stroke-width: 1;
+            rx: 4;
+            ry: 4;
+        }
     </style>
     <script>
         // Paste 'calculatePath' and 'plotPathInSVG' functions here
@@ -309,6 +325,105 @@ function plotMultiplePathsInSVG(startLat, startLon, allSteps, colors, containerI
 }
 
 /**
+ * Calculates the area of a polygon defined by geographic coordinates.
+ * Uses the Shoelace formula with geodesic correction for accurate results.
+ *
+ * @param {Array<{lat: number, lon: number}>} points - Array of polygon vertices.
+ * @returns {number} - Area in square feet.
+ */
+function calculatePolygonArea(points) {
+    if (points.length < 3) return 0;
+    
+    const EARTH_RADIUS_FEET = 3958.8 * 5280; // Earth radius in feet
+    const toRad = deg => deg * (Math.PI / 180);
+    
+    // Use the Shoelace formula with latitude correction
+    // This accounts for the fact that longitude degrees vary in size with latitude
+    let area = 0;
+    const n = points.length;
+    
+    // Calculate the average latitude for the correction factor
+    const avgLat = points.reduce((sum, p) => sum + p.lat, 0) / n;
+    const latCorrectionFactor = Math.cos(toRad(avgLat));
+    
+    // Convert to approximate planar coordinates (in degrees, corrected)
+    const correctedPoints = points.map(p => ({
+        x: p.lon * latCorrectionFactor,
+        y: p.lat
+    }));
+    
+    // Shoelace formula
+    for (let i = 0; i < n; i++) {
+        const j = (i + 1) % n;
+        area += correctedPoints[i].x * correctedPoints[j].y;
+        area -= correctedPoints[j].x * correctedPoints[i].y;
+    }
+    area = Math.abs(area) / 2;
+    
+    // Convert from square degrees to square feet
+    // 1 degree of latitude ≈ 364,000 feet
+    const feetPerDegree = 364000;
+    const areaInSquareFeet = area * feetPerDegree * feetPerDegree;
+    
+    return areaInSquareFeet;
+}
+
+/**
+ * Calculates the centroid (geometric center) of a polygon.
+ *
+ * @param {Array<{lat: number, lon: number}>} points - Array of polygon vertices.
+ * @returns {{lat: number, lon: number}} - The centroid coordinates.
+ */
+function calculatePolygonCentroid(points) {
+    if (points.length === 0) return { lat: 0, lon: 0 };
+    
+    const n = points.length;
+    let centroidLat = 0;
+    let centroidLon = 0;
+    let signedArea = 0;
+    
+    for (let i = 0; i < n; i++) {
+        const j = (i + 1) % n;
+        const a = points[i].lon * points[j].lat - points[j].lon * points[i].lat;
+        signedArea += a;
+        centroidLon += (points[i].lon + points[j].lon) * a;
+        centroidLat += (points[i].lat + points[j].lat) * a;
+    }
+    
+    signedArea *= 0.5;
+    
+    if (Math.abs(signedArea) < 1e-10) {
+        // Fallback to simple average if area is essentially zero
+        return {
+            lat: points.reduce((sum, p) => sum + p.lat, 0) / n,
+            lon: points.reduce((sum, p) => sum + p.lon, 0) / n
+        };
+    }
+    
+    centroidLon /= (6 * signedArea);
+    centroidLat /= (6 * signedArea);
+    
+    return { lat: centroidLat, lon: centroidLon };
+}
+
+/**
+ * Formats an area in square feet to a readable string with acres.
+ *
+ * @param {number} sqFeet - Area in square feet.
+ * @returns {string} - Formatted area string.
+ */
+function formatArea(sqFeet) {
+    const sqFeetPerAcre = 43560;
+    const acres = sqFeet / sqFeetPerAcre;
+    
+    if (acres >= 1) {
+        return `${acres.toFixed(3)} acres\n(${sqFeet.toLocaleString('en-US', {maximumFractionDigits: 0})} sq ft)`;
+    } else {
+        return `${sqFeet.toLocaleString('en-US', {maximumFractionDigits: 0})} sq ft\n(${acres.toFixed(4)} acres)`;
+    }
+}
+
+/**
  * Parses a GeoJSON FeatureCollection and extracts Point features.
  *
  * @param {string|Object} geoJSON - GeoJSON string or object.
@@ -460,6 +575,53 @@ function plotMultiplePathsWithGeoJSON(startLat, startLon, allSteps, colors, cont
         `;
     });
 
+    // --- 4.5 Calculate and Display Polygon Area at Centroid ---
+    allPaths.forEach((pathPoints, index) => {
+        if (pathPoints.length >= 3) {
+            // Calculate area of the polygon
+            const area = calculatePolygonArea(pathPoints);
+            const areaText = formatArea(area);
+            const areaLines = areaText.split('\n');
+            
+            // Calculate centroid of the polygon
+            const centroid = calculatePolygonCentroid(pathPoints);
+            const centroidSVG = toSVGPoint(centroid.lat, centroid.lon).split(',');
+            const cx = parseFloat(centroidSVG[0]);
+            const cy = parseFloat(centroidSVG[1]);
+            
+            // Calculate background rectangle dimensions
+            const lineHeight = 18;
+            const paddingX = 12;
+            const paddingY = 8;
+            const maxLineLength = Math.max(...areaLines.map(l => l.length));
+            const rectWidth = maxLineLength * 8 + paddingX * 2;
+            const rectHeight = areaLines.length * lineHeight + paddingY * 2;
+            
+            // Add background rectangle
+            pathsMarkup += `
+            <rect class="area-label-bg"
+                  x="${cx - rectWidth / 2}"
+                  y="${cy - rectHeight / 2}"
+                  width="${rectWidth}"
+                  height="${rectHeight}"
+                  data-path="${index + 1}" />
+            `;
+            
+            // Add text lines
+            areaLines.forEach((line, lineIndex) => {
+                const lineY = cy + (lineIndex - (areaLines.length - 1) / 2) * lineHeight;
+                pathsMarkup += `
+            <text class="area-label"
+                  x="${cx}"
+                  y="${lineY}"
+                  data-path="${index + 1}">${line}</text>
+                `;
+            });
+            
+            console.log(`Path ${index + 1} area: ${area.toFixed(2)} sq ft (${(area / 43560).toFixed(4)} acres)`);
+        }
+    });
+
     // --- 5. Render to DOM ---
     const container = document.getElementById(containerId);
     if (container) {
@@ -542,7 +704,9 @@ function plotMultiplePathsWithGeoJSON(startLat, startLon, allSteps, colors, cont
                 clickedMarker: 6,
                 polylineStroke: 2,
                 measureLineStroke: 3,
-                hoverStroke: 2
+                hoverStroke: 2,
+                areaLabelFont: 14,
+                areaLabelBgStroke: 1
             };
             
             // Update element sizes based on current zoom level
@@ -576,6 +740,15 @@ function plotMultiplePathsWithGeoJSON(startLat, startLon, allSteps, colors, cont
                 if (measureLine) {
                     measureLine.style.strokeWidth = baseSizes.measureLineStroke * scale;
                 }
+                
+                // Update area label sizes
+                svg.querySelectorAll('.area-label').forEach(label => {
+                    label.style.fontSize = (baseSizes.areaLabelFont * scale) + 'px';
+                });
+                
+                svg.querySelectorAll('.area-label-bg').forEach(rect => {
+                    rect.style.strokeWidth = baseSizes.areaLabelBgStroke * scale;
+                });
                 
                 // Update hover stroke width CSS variable
                 document.documentElement.style.setProperty('--hover-stroke-width', baseSizes.hoverStroke * scale);
@@ -996,8 +1169,8 @@ function plotPathInSVG(pathPoints, containerId, svgWidth, svgHeight, pathColor =
 }
         // --- Example Data ---
         // Start: An arbitrary point
-        const initialLat = 42.525694405; // 121 Page Brook Rd
-        const initialLon = -71.324314395;
+        const initialLat = 42.525695108; // 121 Page Brook Rd
+        const initialLon = -71.324314753;
         
         // Steps: [Bearing in Degrees, Distance in Feet]
         const travelSteps = [
@@ -1012,7 +1185,7 @@ function plotPathInSVG(pathPoints, containerId, svgWidth, svgHeight, pathColor =
             [97.2472222222,	115.240000000000000],
             [48.6777777778,	388.900000000000000]
         ];
-        /* const travelStepsGIS = [   
+        const travelStepsGIS = [   
             [284.1000000000,	169.980000000000000],
             [255.7000000000,	58.170000000000000],
             [293.2000000000,	218.870000000000000],
@@ -1023,21 +1196,207 @@ function plotPathInSVG(pathPoints, containerId, svgWidth, svgHeight, pathColor =
             [126.9000000000,	250.000000000000000],
             [83.6000000000,	116.530000000000000],
             [36.6000000000,	387.150000000000000]
-]; */
+]; 
         // 1. Calculate the geographic coordinates for the path (for logging purposes)
         const pathCoordinates = calculatePath(initialLat, initialLon, travelSteps);
-        //const pathCoordinatesGIS = calculatePath(initialLat, initialLon, travelStepsGIS);
+        const pathCoordinatesGIS = calculatePath(initialLat, initialLon, travelStepsGIS);
         console.log("Calculated Path Coordinates:", pathCoordinates);
         
         // GeoJSON data for boundary points
-        const boundsGeoJSON = {"type":"FeatureCollection","name":"bounds","features":[{"type":"Feature","properties":{"REMARKS":"Gary's lot corner with Dave thomas"},"geometry":{"type":"Point","coordinates":[-71.325258936,42.525833647,9.198]}},{"type":"Feature","properties":{"REMARKS":"concrete bound at aouth eastern corner "},"geometry":{"type":"Point","coordinates":[-71.322791944,42.525827943,20.493]}},{"type":"Feature","properties":{"REMARKS":"iron pipe at top of old driveway"},"geometry":{"type":"Point","coordinates":[-71.32313197,42.525878072,17.855]}},{"type":"Feature","properties":{"REMARKS":"concrete bound on Gary's property"},"geometry":{"type":"Point","coordinates":[-71.324478706,42.526158835,18.594]}},{"type":"Feature","properties":{"REMARKS":"concrete bound on Dave Thomas's property"},"geometry":{"type":"Point","coordinates":[-71.325493657,42.52588362,17.87]}},{"type":"Feature","properties":{"REMARKS":"concrete bound on Thomas land"},"geometry":{"type":"Point","coordinates":[-71.325520417,42.525798633,13.8]}},{"type":"Feature","properties":{"REMARKS":"rtk fix on bound closest to mailbox"},"geometry":{"type":"Point","coordinates":[-71.324314741,42.525695171,14.137]}},{"type":"Feature","properties":{"REMARKS":"RTK corner near Keith McKenzie"},"geometry":{"type":"Point","coordinates":[-71.322824405,42.5258133,19.3]}},{"type":"Feature","properties":{"REMARKS":"bound on Gary's land using rtk"},"geometry":{"type":"Point","coordinates":[-71.324484635,42.52616642,23.553]}},{"type":"Feature","properties":{"REMARKS":"on the western border using rtk but in the GPS mode"},"geometry":{"type":"Point","coordinates":[-71.323766498,42.526312095,25.315]}},{"type":"Feature","properties":{"REMARKS":"beer can on Western bound"},"geometry":{"type":"Point","coordinates":[-71.323713615,42.526358518,25.209]}},{"type":"Feature","properties":{"REMARKS":"surveyor stake rtk float on Western foundry"},"geometry":{"type":"Point","coordinates":[-71.323752012,42.526314932,28.104]}},{"type":"Feature","properties":{"REMARKS":""},"geometry":{"type":"Point","coordinates":[-71.323759458,42.526310185,28.031]}},{"type":"Feature","properties":{"REMARKS":"by grave corner"},"geometry":{"type":"Point","coordinates":[-71.323528332,42.526585205,10.946]}},{"type":"Feature","properties":{"REMARKS":"rtk fix near mailbox"},"geometry":{"type":"Point","coordinates":[-71.324314395,42.525694405,16.015]}},{"type":"Feature","properties":{"REMARKS":"averaging rtk float"},"geometry":{"type":"Point","coordinates":[-71.32447867,42.52617183,23.719]}},{"type":"Feature","properties":{"REMARKS":"rtk float near mailbox"},"geometry":{"type":"Point","coordinates":[-71.324305337,42.525699207,18.426]}},{"type":"Feature","properties":{"REMARKS":"land court bound near McKenzie rtk float"},"geometry":{"type":"Point","coordinates":[-71.32282535,42.525813905,26.082]}},{"type":"Feature","properties":{"REMARKS":"White fiberglass stake near well"},"geometry":{"type":"Point","coordinates":[-71.322889737,42.526077027,20.511]}},{"type":"Feature","properties":{"REMARKS":"corner at top of driveway rtk float"},"geometry":{"type":"Point","coordinates":[-71.323134415,42.525883873,22.344]}},{"type":"Feature","properties":{"REMARKS":""},"geometry":{"type":"Point","coordinates":[-71.324310265,42.52570087,18.792]}},{"type":"Feature","properties":{"REMARKS":"gary"},"geometry":{"type":"Point","coordinates":[-71.324495297,42.526164678,22.589]}},{"type":"Feature","properties":{"REMARKS":""},"geometry":{"type":"Point","coordinates":[-71.32449542,42.526164608,22.583]}},{"type":"Feature","properties":{"REMARKS":""},"geometry":{"type":"Point","coordinates":[-71.32449583,42.526164792,22.598]}},{"type":"Feature","properties":{"REMARKS":""},"geometry":{"type":"Point","coordinates":[-71.322828612,42.525812508,26.956]}},{"type":"Feature","properties":{"REMARKS":""},"geometry":{"type":"Point","coordinates":[-71.32282877,42.525811073,26.371]}},{"type":"Feature","properties":{"REMARKS":""},"geometry":{"type":"Point","coordinates":[-71.322824473,42.525811035,25.378]}},{"type":"Feature","properties":{"REMARKS":""},"geometry":{"type":"Point","coordinates":[-71.32313224,42.525877985,21.619]}},{"type":"Feature","properties":{"REMARKS":""},"geometry":{"type":"Point","coordinates":[-71.322883263,42.526067095,19.29]}}]};
-
+        const boundsGeoJSON = {
+	"type": "FeatureCollection",
+	"name": "bounds",
+	"features": [
+		{
+			"type": "Feature",
+			"properties": {
+				"REMARKS": "Gary's lot corner with Dave thomas"
+			},
+			"geometry": {
+				"type": "Point",
+				"coordinates": [
+					-71.325258936,
+					42.525833647,
+					9.198
+				]
+			}
+		},
+		{
+			"type": "Feature",
+			"properties": {
+				"REMARKS": "rtk fix at mailbox"
+			},
+			"geometry": {
+				"type": "Point",
+				"coordinates": [
+					-71.324317107,
+					42.52569322,
+					20.856
+				]
+			}
+		},
+		{
+			"type": "Feature",
+			"properties": {
+				"REMARKS": "rtk fix at Southeast corner"
+			},
+			"geometry": {
+				"type": "Point",
+				"coordinates": [
+					-71.322824838,
+					42.525812945,
+					25.495
+				]
+			}
+		},
+		{
+			"type": "Feature",
+			"properties": {
+				"REMARKS": "rtk fix at Southeast corner"
+			},
+			"geometry": {
+				"type": "Point",
+				"coordinates": [
+					-71.322825053,
+					42.525813375,
+					25.509
+				]
+			}
+		},
+		{
+			"type": "Feature",
+			"properties": {
+				"REMARKS": "rtk fix at mailbox"
+			},
+			"geometry": {
+				"type": "Point",
+				"coordinates": [
+					-71.324314853,
+					42.525695782,
+					20.33
+				]
+			}
+		},
+		{
+			"type": "Feature",
+			"properties": {
+				"REMARKS": "rtk fix that mailbox"
+			},
+			"geometry": {
+				"type": "Point",
+				"coordinates": [
+					-71.324314888,
+					42.525695552,
+					20.321
+				]
+			}
+		},
+		{
+			"type": "Feature",
+			"properties": {
+				"REMARKS": "rtk fix it! mailbox"
+			},
+			"geometry": {
+				"type": "Point",
+				"coordinates": [
+					-71.324314552,
+					42.525695267,
+					20.288
+				]
+			}
+		},
+		{
+			"type": "Feature",
+			"properties": {
+				"REMARKS": "rtk fix that mailbox"
+			},
+			"geometry": {
+				"type": "Point",
+				"coordinates": [
+					-71.324314825,
+					42.525695613,
+					20.303
+				]
+			}
+		},
+		{
+			"type": "Feature",
+			"properties": {
+				"REMARKS": "rtk fix at mailbox"
+			},
+			"geometry": {
+				"type": "Point",
+				"coordinates": [
+					-71.324314753,
+					42.525695108,
+					18.03
+				]
+			}
+		},
+		{
+			"type": "Feature",
+			"properties": {
+				"REMARKS": "rtk fix at Gary"
+			},
+			"geometry": {
+				"type": "Point",
+				"coordinates": [
+					-71.32449497,
+					42.526164848,
+					23.308
+				]
+			}
+		},
+		{
+			"type": "Feature",
+			"properties": {
+				"REMARKS": "rtk fix at Gary"
+			},
+			"geometry": {
+				"type": "Point",
+				"coordinates": [
+					-71.324495125,
+					42.526164933,
+					23.31
+				]
+			}
+		},
+		{
+			"type": "Feature",
+			"properties": {
+				"REMARKS": "rtk fix at Gary"
+			},
+			"geometry": {
+				"type": "Point",
+				"coordinates": [
+					-71.324495008,
+					42.52616504,
+					23.31
+				]
+			}
+		},
+		{
+			"type": "Feature",
+			"properties": {
+				"REMARKS": "rtk fix at Gary"
+			},
+			"geometry": {
+				"type": "Point",
+				"coordinates": [
+					-71.324494973,
+					42.526165187,
+					23.333
+				]
+			}
+		}
+	]
+};
 window.addEventListener('load', function() {
     // Your JavaScript code here will run after ALL resources on the page are loaded.
     console.log('The entire page, including all resources, has fully loaded!');
     
     // Apply the same bearing adjustment used for plotting
-    const bearingAdjustment = -13.7;
+    const bearingAdjustment = -14.05;
     const adjustedTravelSteps = travelSteps.map((step) => {
         const [bearing, distance] = step;
         const adjustedBearing = (bearing + bearingAdjustment) % 360;
@@ -1050,7 +1409,7 @@ window.addEventListener('load', function() {
     
     // 2. Plot using the pre-calculated adjusted path coordinates directly
     // Pass the adjusted steps so the plot function calculates the same coordinates
-    plotMultiplePathsWithGeoJSON(initialLat, initialLon, [adjustedTravelSteps], ['blue'], "svg-container", 3000, 2000, [0], boundsGeoJSON, 'green');
+    plotMultiplePathsWithGeoJSON(initialLat, initialLon, [adjustedTravelSteps/*, travelStepsGIS*/], ['blue'/*, 'red'*/], "svg-container", 3000, 2000, [0, 0], boundsGeoJSON, 'green');
     
     // 3. Populate CSV display with path vertices (using adjusted coordinates)
     const csvDisplay = document.getElementById('csv-content');
