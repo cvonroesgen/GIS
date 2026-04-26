@@ -1171,9 +1171,12 @@ function plotPathInSVG(pathPoints, containerId, svgWidth, svgHeight, pathColor =
         // Start: An arbitrary point
         const initialLat = 42.525695108; // 121 Page Brook Rd
         const initialLon = -71.324314753;
+
+
+        //Steps: [Bearing in Degrees:minutes:seconds, Distance in Feet]
         
         // Steps: [Bearing in Degrees, Distance in Feet]
-        const travelSteps = [
+        const travelStepsRegisterdLand = [
             [288.2061111111,	170.950000000000000],
             [257.2422222222,	58.310000000000000],
             [306.6427777778,	218.960000000000000],
@@ -1198,7 +1201,7 @@ function plotPathInSVG(pathPoints, containerId, svgWidth, svgHeight, pathColor =
             [36.6000000000,	387.150000000000000]
 ]; 
         // 1. Calculate the geographic coordinates for the path (for logging purposes)
-        const pathCoordinates = calculatePath(initialLat, initialLon, travelSteps);
+        const pathCoordinates = calculatePath(initialLat, initialLon, travelStepsRegisterdLand);
         const pathCoordinatesGIS = calculatePath(initialLat, initialLon, travelStepsGIS);
         console.log("Calculated Path Coordinates:", pathCoordinates);
         
@@ -1397,7 +1400,7 @@ window.addEventListener('load', function() {
     
     // Apply the same bearing adjustment used for plotting
     const bearingAdjustment = -14.05;
-    const adjustedTravelSteps = travelSteps.map((step) => {
+    const adjustedTravelSteps = travelStepsRegisterdLand.map((step) => {
         const [bearing, distance] = step;
         const adjustedBearing = (bearing + bearingAdjustment) % 360;
         return [adjustedBearing, distance];
