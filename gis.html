@@ -132,6 +132,20 @@
     <script>
         // Paste 'calculatePath' and 'plotPathInSVG' functions here
 /**
+ * Applies a bearing adjustment (in degrees) to each step in a travel steps array.
+ *
+ * @param {Array<Array<number>>} steps - Array of [bearingDegrees, distanceFeet] pairs.
+ * @param {number} adjustment - Degrees to add to each bearing.
+ * @returns {Array<Array<number>>} - New array of adjusted [bearingDegrees, distanceFeet] pairs.
+ */
+function applyBearingAdjustment(steps, adjustment) {
+    return steps.map(([bearing, distance]) => [
+        (bearing + adjustment) % 360,
+        distance
+    ]);
+}
+
+/**
  * Calculates a series of destination points from a starting point
  * based on an array of [distanceFeet, bearingDegrees] steps.
  *
@@ -1169,41 +1183,49 @@ function plotPathInSVG(pathPoints, containerId, svgWidth, svgHeight, pathColor =
 }
         // --- Example Data ---
         // Start: An arbitrary point
-        const initialLat = 42.525695108; // 121 Page Brook Rd
-        const initialLon = -71.324314753;
+        const initialLat = 42.525695300; // 121 Page Brook Rd
+        const initialLon = -71.324314700;
 
 
         //Steps: [Bearing in Degrees:minutes:seconds, Distance in Feet]
         
         // Steps: [Bearing in Degrees, Distance in Feet]
         const travelStepsRegisterdLand = [
-            [288.2061111111,	170.950000000000000],
-            [257.2422222222,	58.310000000000000],
-            [306.6427777778,	218.960000000000000],
-            [187.0708333333,	111.000000000000000],
-            [119.9402777778,	96.260000000000000],
-            [230.8472222222,	96.440000000000000],
-            [267.9361111111,	154.590000000000000],
-            [141.1083333333,	250.000000000000000],
-            [97.2472222222,	115.240000000000000],
-            [48.6777777778,	388.900000000000000]
+            [288.2061111111,	170.95],
+            [257.2422222222,	58.31],
+            [306.6427777778,	218.96],
+            [187.0708333333,	111.0],
+            [119.9402777778,	96.26],
+            [230.8472222222,	96.44],
+            [267.9361111111,	154.59]
         ];
-        const travelStepsGIS = [   
-            [284.1000000000,	169.980000000000000],
-            [255.7000000000,	58.170000000000000],
-            [293.2000000000,	218.870000000000000],
-            [165.0000000000,	111.810000000000000],
-            [116.0000000000,	96.160000000000000],
-            [223.3000000000,	122.880000000000000],
-            [251.0000000000,	157.970000000000000],
-            [126.9000000000,	250.000000000000000],
-            [83.6000000000,	116.530000000000000],
-            [36.6000000000,	387.150000000000000]
-]; 
+        const travelStepsForWestSide = [   
+            [288.2061111111,	170.95],
+            [257.2422222222,	58.31],
+            [306.6427777778,	218.96],
+            [187.0708333333,	111.0],
+            [119.9402777778,	96.26],
+            [119.9402777778,	247.8],            
+            [48.6777777778,	158.26]
+    ]; 
+    const travelStepsForNorthCorner = [   
+            [288.2061111111,	170.95],
+            [257.2422222222,	58.31],
+            [306.6427777778,	218.96],
+            [187.0708333333,	111.0],
+            [119.9402777778,	96.26],
+            [119.9402777778,	247.8],            
+            [228.6777777778,	230.64],
+             [277.2472222222, 115.24]
+            
+    ]; 
         // 1. Calculate the geographic coordinates for the path (for logging purposes)
         const pathCoordinates = calculatePath(initialLat, initialLon, travelStepsRegisterdLand);
-        const pathCoordinatesGIS = calculatePath(initialLat, initialLon, travelStepsGIS);
+        const pathCoordinatesForWestSide = calculatePath(initialLat, initialLon, travelStepsForWestSide);
+        const pathCoordinatesForNorthCorner = calculatePath(initialLat, initialLon, travelStepsForNorthCorner);
         console.log("Calculated Path Coordinates:", pathCoordinates);
+        console.log("Calculated Path Coordinates for West Side:", pathCoordinatesForWestSide);
+        console.log("Calculated Path Coordinates for North Corner:", pathCoordinatesForNorthCorner);
         
         // GeoJSON data for boundary points
         const boundsGeoJSON = {
@@ -1400,19 +1422,18 @@ window.addEventListener('load', function() {
     
     // Apply the same bearing adjustment used for plotting
     const bearingAdjustment = -14.05;
-    const adjustedTravelSteps = travelStepsRegisterdLand.map((step) => {
-        const [bearing, distance] = step;
-        const adjustedBearing = (bearing + bearingAdjustment) % 360;
-        return [adjustedBearing, distance];
-    });
-    const adjustedPathCoordinates = calculatePath(initialLat, initialLon, adjustedTravelSteps);
+    const adjustedTravelStepsEastSide = applyBearingAdjustment(travelStepsRegisterdLand, bearingAdjustment);
+    const adjustedTravelStepsWestSide = applyBearingAdjustment(travelStepsForWestSide, bearingAdjustment);
+    const adjustedTravelStepsNorthCorner = applyBearingAdjustment(travelStepsForNorthCorner, bearingAdjustment);
+
+    const adjustedPathCoordinates = calculatePath(initialLat, initialLon, adjustedTravelStepsEastSide);
     
     // Log the adjusted coordinates to verify
     console.log("Adjusted Path Coordinates:", adjustedPathCoordinates);
     
     // 2. Plot using the pre-calculated adjusted path coordinates directly
     // Pass the adjusted steps so the plot function calculates the same coordinates
-    plotMultiplePathsWithGeoJSON(initialLat, initialLon, [adjustedTravelSteps/*, travelStepsGIS*/], ['blue'/*, 'red'*/], "svg-container", 3000, 2000, [0, 0], boundsGeoJSON, 'green');
+    plotMultiplePathsWithGeoJSON(initialLat, initialLon, [adjustedTravelStepsEastSide, adjustedTravelStepsWestSide, adjustedTravelStepsNorthCorner], ['blue', 'red', 'orange'], "svg-container", 3000, 2000, [0, 0], boundsGeoJSON, 'green');
     
     // 3. Populate CSV display with path vertices (using adjusted coordinates)
     const csvDisplay = document.getElementById('csv-content');
