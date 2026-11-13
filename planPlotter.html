@@ -86,6 +86,47 @@
             box-sizing: border-box;
             width: 100%;
         }
+        .plot-actions {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 8px;
+            margin-top: 4px;
+        }
+        #saved-settings-key {
+            min-width: 180px;
+        }
+        #save-settings-dialog {
+            box-sizing: border-box;
+            width: min(90vw, 480px);
+            border: 1px solid #777;
+            border-radius: 6px;
+            padding: 20px;
+        }
+        #save-settings-dialog::backdrop {
+            background: rgba(0, 0, 0, 0.4);
+        }
+        #save-settings-form {
+            display: grid;
+            gap: 12px;
+        }
+        #save-settings-form label {
+            display: grid;
+            gap: 6px;
+        }
+        #save-settings-form input,
+        #save-settings-form select {
+            box-sizing: border-box;
+            width: 100%;
+        }
+        #save-dialog-status[data-error="true"] {
+            color: #b00020;
+        }
+        .save-dialog-actions {
+            display: flex;
+            justify-content: flex-end;
+            gap: 8px;
+        }
         #coordinate-polygon-status {
             margin: 8px 0;
         }
@@ -1124,7 +1165,75 @@ window.addEventListener('load', function() {
     const initialLatitudeInput = document.getElementById('initial-latitude-input');
     const bearingAdjustmentInput = document.getElementById('bearing-adjustment-input');
     const coordinateStatus = document.getElementById('coordinate-polygon-status');
+    const savedSettingsKeySelect = document.getElementById('saved-settings-key');
+    const saveDialog = document.getElementById('save-settings-dialog');
+    const saveDialogForm = document.getElementById('save-settings-form');
+    const newSettingsKeyInput = document.getElementById('new-settings-key');
+    const existingSettingsKeySelect = document.getElementById('existing-settings-key');
+    const saveDialogStatus = document.getElementById('save-dialog-status');
     let bearingAdjustment;
+
+    const setStatus = (message, isError = false) => {
+        coordinateStatus.textContent = message;
+        coordinateStatus.dataset.error = String(isError);
+    };
+
+    const updateKeySelect = (select, prompt, keys, selectedKey) => {
+        const options = [document.createElement('option')];
+        options[0].value = '';
+        options[0].textContent = prompt;
+        keys.forEach(key => {
+            const option = document.createElement('option');
+            option.value = key;
+            option.textContent = key;
+            options.push(option);
+        });
+        select.replaceChildren(...options);
+        if (keys.includes(selectedKey)) {
+            select.value = selectedKey;
+        }
+    };
+
+    const refreshSavedKeyLists = (
+        selectedLoadKey = savedSettingsKeySelect.value,
+        selectedExistingKey = existingSettingsKeySelect.value
+    ) => {
+        const storage = window.localStorage;
+        const keys = [];
+        for (let index = 0; index < storage.length; index++) {
+            const key = storage.key(index);
+            if (key !== null) {
+                keys.push(key);
+            }
+        }
+        keys.sort((a, b) => a.localeCompare(b));
+        updateKeySelect(savedSettingsKeySelect, 'Select a saved key', keys, selectedLoadKey);
+        updateKeySelect(existingSettingsKeySelect, 'Create a new key', keys, selectedExistingKey);
+    };
+
+    const readSavedSettings = value => {
+        let settings;
+        try {
+            settings = JSON.parse(value);
+        } catch {
+            throw new Error('The selected localStorage key does not contain valid JSON.');
+        }
+
+        const fields = [
+            'coordinatePolygon',
+            'travelSteps',
+            'boundsGeoJSON',
+            'initialLongitude',
+            'initialLatitude',
+            'bearingAdjustment'
+        ];
+        if (!settings || typeof settings !== 'object' ||
+            fields.some(field => typeof settings[field] !== 'string')) {
+            throw new Error('The selected key does not contain saved plot settings.');
+        }
+
+        return settings;
+    };
 
     const refreshPlot = () => {
         let nextBearingAdjustment;
@@ -1186,8 +1295,103 @@ window.addEventListener('load', function() {
         coordinateStatus.dataset.error = 'false';
     };
 
+    document.getElementById('load-settings-button').addEventListener('click', () => {
+        const key = savedSettingsKeySelect.value;
+        if (!key) {
+            setStatus('Select a localStorage key to load.', true);
+            return;
+        }
+
+        try {
+            const value = window.localStorage.getItem(key);
+            if (value === null) {
+                refreshSavedKeyLists();
+                setStatus(`The localStorage key "${key}" no longer exists.`, true);
+                return;
+            }
+
+            const settings = readSavedSettings(value);
+            coordinateInput.value = settings.coordinatePolygon;
+            travelStepsInput.value = settings.travelSteps;
+            boundsGeoJSONInput.value = settings.boundsGeoJSON;
+            initialLongitudeInput.value = settings.initialLongitude;
+            initialLatitudeInput.value = settings.initialLatitude;
+            bearingAdjustmentInput.value = settings.bearingAdjustment;
+            refreshPlot();
+        } catch (error) {
+            setStatus(`Unable to load settings: ${error.message}`, true);
+        }
+    });
+
+    document.getElementById('open-save-dialog-button').addEventListener('click', () => {
+        newSettingsKeyInput.value = '';
+        existingSettingsKeySelect.value = '';
+        saveDialogStatus.textContent = '';
+        saveDialogStatus.dataset.error = 'false';
+        try {
+            refreshSavedKeyLists(savedSettingsKeySelect.value, '');
+            saveDialog.showModal();
+        } catch (error) {
+            setStatus(`Unable to open saved settings: ${error.message}`, true);
+        }
+    });
+
+    newSettingsKeyInput.addEventListener('input', () => {
+        if (newSettingsKeyInput.value) {
+            existingSettingsKeySelect.value = '';
+        }
+    });
+    existingSettingsKeySelect.addEventListener('change', () => {
+        if (existingSettingsKeySelect.value) {
+            newSettingsKeyInput.value = '';
+        }
+    });
+    document.getElementById('cancel-save-button').addEventListener('click', () => {
+        saveDialog.close();
+    });
+    saveDialogForm.addEventListener('submit', event => {
+        event.preventDefault();
+        const key = existingSettingsKeySelect.value || newSettingsKeyInput.value.trim();
+        if (!key) {
+            saveDialogStatus.textContent = 'Enter a new key or select an existing key.';
+            saveDialogStatus.dataset.error = 'true';
+            return;
+        }
+
+        const settings = {
+            coordinatePolygon: coordinateInput.value,
+            travelSteps: travelStepsInput.value,
+            boundsGeoJSON: boundsGeoJSONInput.value,
+            initialLongitude: initialLongitudeInput.value,
+            initialLatitude: initialLatitudeInput.value,
+            bearingAdjustment: bearingAdjustmentInput.value
+        };
+        try {
+            window.localStorage.setItem(key, JSON.stringify(settings));
+            refreshSavedKeyLists(key, key);
+            saveDialog.close();
+            setStatus(`Saved plot settings as "${key}".`);
+        } catch (error) {
+            saveDialogStatus.textContent = `Unable to save settings: ${error.message}`;
+            saveDialogStatus.dataset.error = 'true';
+        }
+    });
+
+    window.addEventListener('storage', () => {
+        try {
+            refreshSavedKeyLists();
+        } catch (error) {
+            setStatus(`Unable to refresh localStorage keys: ${error.message}`, true);
+        }
+    });
+
     document.getElementById('plot-coordinate-polygon').addEventListener('click', refreshPlot);
     refreshPlot();
+    try {
+        refreshSavedKeyLists();
+    } catch (error) {
+        setStatus(`Unable to read localStorage keys: ${error.message}`, true);
+    }
 });
         
     </script>
@@ -1305,9 +1509,32 @@ window.addEventListener('load', function() {
 }</textarea>
             </div>
         </div>
-        <button id="plot-coordinate-polygon" type="button">Refresh</button>
+        <div class="plot-actions">
+            <button id="plot-coordinate-polygon" type="button">Refresh</button>
+            <select id="saved-settings-key" aria-label="Saved settings key">
+                <option value="">Select a saved key</option>
+            </select>
+            <button id="load-settings-button" type="button">Load</button>
+            <button id="open-save-dialog-button" type="button">Save</button>
+        </div>
         <p id="coordinate-polygon-status" role="status" aria-live="polite"></p>
     </section>
+    <dialog id="save-settings-dialog" aria-labelledby="save-settings-heading">
+        <form id="save-settings-form">
+            <h2 id="save-settings-heading">Save Plot Settings</h2>
+            <label for="new-settings-key">New key</label>
+            <input id="new-settings-key" type="text" autocomplete="off">
+            <label for="existing-settings-key">Or select an existing key</label>
+            <select id="existing-settings-key">
+                <option value="">Create a new key</option>
+            </select>
+            <p id="save-dialog-status" role="status" aria-live="polite"></p>
+            <div class="save-dialog-actions">
+                <button id="cancel-save-button" type="button">Cancel</button>
+                <button type="submit">Save</button>
+            </div>
+        </form>
+    </dialog>
     <div id="svg-container"></div>
 </body>
 </html>
