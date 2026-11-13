@@ -895,6 +895,7 @@ function plotMultiplePathsWithGeoJSON(startLat, startLon, allSteps, colors, cont
                 
                 svg.setAttribute('viewBox', `${viewBox.x} ${viewBox.y} ${viewBox.w} ${viewBox.h}`);
                 updateElementSizes();
+                positionMeasurementLabel();
             });
             
             // --- Helper functions for coordinate conversion ---
@@ -992,6 +993,7 @@ function plotMultiplePathsWithGeoJSON(startLat, startLon, allSteps, colors, cont
                 viewBox.y = startViewBox.y - dyViewBox;
                 
                 svg.setAttribute('viewBox', `${viewBox.x} ${viewBox.y} ${viewBox.w} ${viewBox.h}`);
+                positionMeasurementLabel();
             });
             
             svg.addEventListener('mouseup', (e) => {
@@ -1013,6 +1015,7 @@ function plotMultiplePathsWithGeoJSON(startLat, startLon, allSteps, colors, cont
             svg.addEventListener('dblclick', () => {
                 viewBox = { ...originalViewBox };
                 svg.setAttribute('viewBox', `${viewBox.x} ${viewBox.y} ${viewBox.w} ${viewBox.h}`);
+                positionMeasurementLabel();
             });
             
             // --- 7. Distance Measurement with Right-Click Drag ---
@@ -1029,6 +1032,30 @@ function plotMultiplePathsWithGeoJSON(startLat, startLon, allSteps, colors, cont
                 measureLabel.className = 'measure-label';
                 document.body.appendChild(measureLabel);
             }
+
+            const positionMeasurementLabel = () => {
+                if (measureLine.style.display === 'none' || measureLabel.style.display === 'none') {
+                    return;
+                }
+
+                const matrix = svg.getScreenCTM();
+                if (!matrix) {
+                    return;
+                }
+
+                const midpoint = svg.createSVGPoint();
+                midpoint.x = (
+                    Number(measureLine.getAttribute('x1')) +
+                    Number(measureLine.getAttribute('x2'))
+                ) / 2;
+                midpoint.y = (
+                    Number(measureLine.getAttribute('y1')) +
+                    Number(measureLine.getAttribute('y2'))
+                ) / 2;
+                const screenPoint = midpoint.matrixTransform(matrix);
+                measureLabel.style.left = (screenPoint.x + window.scrollX + 10) + 'px';
+                measureLabel.style.top = (screenPoint.y + window.scrollY - 30) + 'px';
+            };
             
             let isMeasuring = false;
             let measureStart = { x: 0, y: 0 };
@@ -1138,10 +1165,7 @@ function plotMultiplePathsWithGeoJSON(startLat, startLon, allSteps, colors, cont
                     isMeasuring = false;
                     if (dragDistance > dragThreshold) {
                         createUserMarker(coords);
-                        const midpointX = (measureStartClient.x + e.clientX) / 2;
-                        const midpointY = (measureStartClient.y + e.clientY) / 2;
-                        measureLabel.style.left = (midpointX + window.scrollX + 10) + 'px';
-                        measureLabel.style.top = (midpointY + window.scrollY - 30) + 'px';
+                        positionMeasurementLabel();
                     } else {
                         measureLine.style.display = 'none';
                         measureLabel.style.display = 'none';
