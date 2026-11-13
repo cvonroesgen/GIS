@@ -64,6 +64,15 @@
             margin: 6px 0 10px;
             font-family: monospace;
         }
+        #coordinate-polygon-input {
+            border: 4px solid blue;
+        }
+        #bounds-geojson-input {
+            border: 4px solid green;
+        }
+        #travel-steps-input {
+            border: 4px solid red;
+        }
         .initial-coordinate-inputs {
             display: grid;
             grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1414,7 +1423,7 @@ window.addEventListener('load', function() {
         ]);
         plotMultiplePathsWithGeoJSON(
             nextInitialLat, nextInitialLon, [adjustedTravelSteps], ['red'],
-            "svg-container", 3000, 2000, [0, 0], nextBoundsGeoJSON, 'red', coordinatePolygon
+            "svg-container", 3000, 2000, [0, 0], nextBoundsGeoJSON, 'green', coordinatePolygon
         );
 
         initialLon = nextInitialLon;
@@ -1440,7 +1449,7 @@ window.addEventListener('load', function() {
         <h2 id="coordinate-polygon-heading">Compare Google Maps. Surveyor Plan and GNSS RTK Points</h2>
         <div class="coordinate-inputs">
             <div class="coordinate-input-group">
-                <label for="coordinate-polygon-input">Google Maps or GIS (longitude, latitude per line):</label>
+                <label for="coordinate-polygon-input">Google Maps or Municipal GIS (longitude, latitude per line):</label>
                 <textarea id="coordinate-polygon-input" rows="8" placeholder="">-71.1555172, 42.4396526
                     -71.155992728, 42.440247121
                     -71.15603184,42.4403281
