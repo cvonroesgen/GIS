@@ -64,6 +64,19 @@
             margin: 6px 0 10px;
             font-family: monospace;
         }
+        .initial-coordinate-inputs {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 12px;
+            margin-bottom: 12px;
+        }
+        .initial-coordinate-field label {
+            display: block;
+        }
+        .initial-coordinate-field input {
+            box-sizing: border-box;
+            width: 100%;
+        }
         #coordinate-polygon-status {
             margin: 8px 0;
         }
@@ -1344,8 +1357,8 @@ function plotPathInSVG(pathPoints, containerId, svgWidth, svgHeight, pathColor =
 }
         // --- Example Data ---
         // Start: An arbitrary point
-        const initialLat = 42.439655807; // 121 Page Brook Rd
-        const initialLon = -71.155536538;
+        let initialLat = 42.439655807;
+        let initialLon = -71.155536538;
         
         let travelSteps = [];
         
@@ -1422,12 +1435,27 @@ window.addEventListener('load', function() {
     const bearingAdjustment = -14.05;
     const coordinateInput = document.getElementById('coordinate-polygon-input');
     const travelStepsInput = document.getElementById('travel-steps-input');
+    const initialLongitudeInput = document.getElementById('initial-longitude-input');
+    const initialLatitudeInput = document.getElementById('initial-latitude-input');
     const coordinateStatus = document.getElementById('coordinate-polygon-status');
 
     const refreshPlot = () => {
+        let nextInitialLon;
+        let nextInitialLat;
         let nextTravelSteps;
         let coordinatePolygon;
         try {
+            if (!initialLongitudeInput.value.trim() || !initialLatitudeInput.value.trim()) {
+                throw new Error('Enter both an initial longitude and latitude.');
+            }
+            nextInitialLon = Number(initialLongitudeInput.value);
+            nextInitialLat = Number(initialLatitudeInput.value);
+            if (!Number.isFinite(nextInitialLon) || nextInitialLon < -180 || nextInitialLon > 180) {
+                throw new Error('Initial Longitude must be between -180 and 180.');
+            }
+            if (!Number.isFinite(nextInitialLat) || nextInitialLat < -90 || nextInitialLat > 90) {
+                throw new Error('Initial Latitude must be between -90 and 90.');
+            }
             nextTravelSteps = parseTravelSteps(travelStepsInput.value);
             coordinatePolygon = coordinateInput.value.trim()
                 ? parseCoordinateRows(coordinateInput.value)
@@ -1446,13 +1474,15 @@ window.addEventListener('load', function() {
             (bearing + bearingAdjustment) % 360,
             distance
         ]);
-        const adjustedPathCoordinates = calculatePath(initialLat, initialLon, adjustedTravelSteps);
+        const adjustedPathCoordinates = calculatePath(nextInitialLat, nextInitialLon, adjustedTravelSteps);
 
         plotMultiplePathsWithGeoJSON(
-            initialLat, initialLon, [adjustedTravelSteps], ['blue', 'red'],
+            nextInitialLat, nextInitialLon, [adjustedTravelSteps], ['blue', 'red'],
             "svg-container", 3000, 2000, [0, 0], boundsGeoJSON, 'green', coordinatePolygon
         );
 
+        initialLon = nextInitialLon;
+        initialLat = nextInitialLat;
         travelSteps = nextTravelSteps;
 
         const csvDisplay = document.getElementById('csv-content');
@@ -1515,6 +1545,16 @@ window.addEventListener('load', function() {
                 </textarea>
             </div>
             <div class="coordinate-input-group">
+                <div class="initial-coordinate-inputs">
+                    <div class="initial-coordinate-field">
+                        <label for="initial-longitude-input">Initial Longitude</label>
+                        <input id="initial-longitude-input" type="number" step="any" value="-71.155536538">
+                    </div>
+                    <div class="initial-coordinate-field">
+                        <label for="initial-latitude-input">Initial Latitude</label>
+                        <input id="initial-latitude-input" type="number" step="any" value="42.439655807">
+                    </div>
+                </div>
                 <label for="travel-steps-input">Travel steps (bearing, distance per line):</label>
                 <textarea id="travel-steps-input" rows="8">S 20 41 10 E", 278.14
                     S 8 14 52 E, 39.5
