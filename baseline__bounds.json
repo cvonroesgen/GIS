@@ -1,188 +1,580 @@
 {
-	"type": "FeatureCollection",
-	"name": "bounds",
-	"features": [
-		{
-			"type": "Feature",
-			"properties": {
-				"REMARKS": "Gary's lot corner with Dave thomas"
-			},
-			"geometry": {
-				"type": "Point",
-				"coordinates": [
-					-71.325258936,
-					42.525833647,
-					9.198
-				]
-			}
-		},
-		{
-			"type": "Feature",
-			"properties": {
-				"REMARKS": "rtk fix at mailbox"
-			},
-			"geometry": {
-				"type": "Point",
-				"coordinates": [
-					-71.324317107,
-					42.52569322,
-					20.856
-				]
-			}
-		},
-		{
-			"type": "Feature",
-			"properties": {
-				"REMARKS": "rtk fix at Southeast corner"
-			},
-			"geometry": {
-				"type": "Point",
-				"coordinates": [
-					-71.322824838,
-					42.525812945,
-					25.495
-				]
-			}
-		},
-		{
-			"type": "Feature",
-			"properties": {
-				"REMARKS": "rtk fix at Southeast corner"
-			},
-			"geometry": {
-				"type": "Point",
-				"coordinates": [
-					-71.322825053,
-					42.525813375,
-					25.509
-				]
-			}
-		},
-		{
-			"type": "Feature",
-			"properties": {
-				"REMARKS": "rtk fix at mailbox"
-			},
-			"geometry": {
-				"type": "Point",
-				"coordinates": [
-					-71.324314853,
-					42.525695782,
-					20.33
-				]
-			}
-		},
-		{
-			"type": "Feature",
-			"properties": {
-				"REMARKS": "rtk fix that mailbox"
-			},
-			"geometry": {
-				"type": "Point",
-				"coordinates": [
-					-71.324314888,
-					42.525695552,
-					20.321
-				]
-			}
-		},
-		{
-			"type": "Feature",
-			"properties": {
-				"REMARKS": "rtk fix it! mailbox"
-			},
-			"geometry": {
-				"type": "Point",
-				"coordinates": [
-					-71.324314552,
-					42.525695267,
-					20.288
-				]
-			}
-		},
-		{
-			"type": "Feature",
-			"properties": {
-				"REMARKS": "rtk fix that mailbox"
-			},
-			"geometry": {
-				"type": "Point",
-				"coordinates": [
-					-71.324314825,
-					42.525695613,
-					20.303
-				]
-			}
-		},
-		{
-			"type": "Feature",
-			"properties": {
-				"REMARKS": "rtk fix at mailbox"
-			},
-			"geometry": {
-				"type": "Point",
-				"coordinates": [
-					-71.324314753,
-					42.525695108,
-					18.03
-				]
-			}
-		},
-		{
-			"type": "Feature",
-			"properties": {
-				"REMARKS": "rtk fix at Gary"
-			},
-			"geometry": {
-				"type": "Point",
-				"coordinates": [
-					-71.32449497,
-					42.526164848,
-					23.308
-				]
-			}
-		},
-		{
-			"type": "Feature",
-			"properties": {
-				"REMARKS": "rtk fix at Gary"
-			},
-			"geometry": {
-				"type": "Point",
-				"coordinates": [
-					-71.324495125,
-					42.526164933,
-					23.31
-				]
-			}
-		},
-		{
-			"type": "Feature",
-			"properties": {
-				"REMARKS": "rtk fix at Gary"
-			},
-			"geometry": {
-				"type": "Point",
-				"coordinates": [
-					-71.324495008,
-					42.52616504,
-					23.31
-				]
-			}
-		},
-		{
-			"type": "Feature",
-			"properties": {
-				"REMARKS": "rtk fix at Gary"
-			},
-			"geometry": {
-				"type": "Point",
-				"coordinates": [
-					-71.324494973,
-					42.526165187,
-					23.333
-				]
-			}
-		}
-	]
+  "type": "FeatureCollection",
+  "name": "bounds",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "REMARKS": "Gary's lot corner with Dave thomas"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -71.325258936,
+          42.525833647,
+          9.198
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "REMARKS": "concrete bound at aouth eastern corner "
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -71.322791944,
+          42.525827943,
+          20.493
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "REMARKS": "iron pipe at top of old driveway"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -71.32313197,
+          42.525878072,
+          17.855
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "REMARKS": "concrete bound on Gary's property"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -71.324478706,
+          42.526158835,
+          18.594
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "REMARKS": "concrete bound on Dave Thomas's property"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -71.325493657,
+          42.52588362,
+          17.87
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "REMARKS": "concrete bound on Thomas land"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -71.325520417,
+          42.525798633,
+          13.8
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "REMARKS": "rtk fix on bound closest to mailbox"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -71.324314741,
+          42.525695171,
+          14.137
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "REMARKS": "RTK corner near Keith McKenzie"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -71.322824405,
+          42.5258133,
+          19.3
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "REMARKS": "bound on Gary's land using rtk"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -71.324484635,
+          42.52616642,
+          23.553
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "REMARKS": "on the western border using rtk but in the GPS mode"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -71.323766498,
+          42.526312095,
+          25.315
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "REMARKS": "beer can on Western bound"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -71.323713615,
+          42.526358518,
+          25.209
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "REMARKS": "surveyor stake rtk float on Western foundry"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -71.323752012,
+          42.526314932,
+          28.104
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "REMARKS": ""
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -71.323759458,
+          42.526310185,
+          28.031
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "REMARKS": "by grave corner"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -71.323528332,
+          42.526585205,
+          10.946
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "REMARKS": "rtk fix near mailbox"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -71.324314395,
+          42.525694405,
+          16.015
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "REMARKS": "averaging rtk float"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -71.32447867,
+          42.52617183,
+          23.719
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "REMARKS": "rtk float near mailbox"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -71.324305337,
+          42.525699207,
+          18.426
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "REMARKS": "land court bound near McKenzie rtk float"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -71.32282535,
+          42.525813905,
+          26.082
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "REMARKS": "White fiberglass stake near well"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -71.322889737,
+          42.526077027,
+          20.511
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "REMARKS": "corner at top of driveway rtk float"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -71.323134415,
+          42.525883873,
+          22.344
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "REMARKS": ""
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -71.324310265,
+          42.52570087,
+          18.792
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "REMARKS": "gary"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -71.324495297,
+          42.526164678,
+          22.589
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "REMARKS": ""
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -71.32449542,
+          42.526164608,
+          22.583
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "REMARKS": ""
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -71.32449583,
+          42.526164792,
+          22.598
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "REMARKS": ""
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -71.322828612,
+          42.525812508,
+          26.956
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "REMARKS": ""
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -71.32282877,
+          42.525811073,
+          26.371
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "REMARKS": ""
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -71.322824473,
+          42.525811035,
+          25.378
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "REMARKS": ""
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -71.32313224,
+          42.525877985,
+          21.619
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "REMARKS": ""
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -71.322883263,
+          42.526067095,
+          19.29
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "REMARKS": "rtk fix at mailbox"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -71.324317107,
+          42.52569322,
+          20.856
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "REMARKS": "rtk fix at Southeast corner"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -71.322824838,
+          42.525812945,
+          25.495
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "REMARKS": "rtk fix at Southeast corner"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -71.322825053,
+          42.525813375,
+          25.509
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "REMARKS": "rtk fix at mailbox"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -71.324314853,
+          42.525695782,
+          20.33
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "REMARKS": "rtk fix that mailbox"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -71.324314888,
+          42.525695552,
+          20.321
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "REMARKS": "rtk fix it! mailbox"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -71.324314552,
+          42.525695267,
+          20.288
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "REMARKS": "rtk fix that mailbox"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -71.324314825,
+          42.525695613,
+          20.303
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "REMARKS": "rtk fix at mailbox"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -71.324314753,
+          42.525695108,
+          18.03
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "REMARKS": "rtk fix at Gary"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -71.32449497,
+          42.526164848,
+          23.308
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "REMARKS": "rtk fix at Gary"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -71.324495125,
+          42.526164933,
+          23.31
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "REMARKS": "rtk fix at Gary"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -71.324495008,
+          42.52616504,
+          23.31
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "REMARKS": "rtk fix at Gary"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -71.324494973,
+          42.526165187,
+          23.333
+        ]
+      }
+    }
+  ]
 }
