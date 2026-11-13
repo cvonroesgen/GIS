@@ -1117,21 +1117,30 @@ function plotMultiplePathsWithGeoJSON(startLat, startLon, allSteps, colors, cont
 window.addEventListener('load', function() {
     console.log('The entire page, including all resources, has fully loaded!');
 
-    const bearingAdjustment = -14.05;
     const coordinateInput = document.getElementById('coordinate-polygon-input');
     const travelStepsInput = document.getElementById('travel-steps-input');
     const boundsGeoJSONInput = document.getElementById('bounds-geojson-input');
     const initialLongitudeInput = document.getElementById('initial-longitude-input');
     const initialLatitudeInput = document.getElementById('initial-latitude-input');
+    const bearingAdjustmentInput = document.getElementById('bearing-adjustment-input');
     const coordinateStatus = document.getElementById('coordinate-polygon-status');
+    let bearingAdjustment;
 
     const refreshPlot = () => {
+        let nextBearingAdjustment;
         let nextInitialLon;
         let nextInitialLat;
         let nextTravelSteps;
         let coordinatePolygon;
         let nextBoundsGeoJSON;
         try {
+            if (!bearingAdjustmentInput.value.trim()) {
+                throw new Error('Enter a Surveyor North to True North Offset.');
+            }
+            nextBearingAdjustment = Number(bearingAdjustmentInput.value);
+            if (!Number.isFinite(nextBearingAdjustment)) {
+                throw new Error('Surveyor North to True North Offset must be a number.');
+            }
             if (!initialLongitudeInput.value.trim() || !initialLatitudeInput.value.trim()) {
                 throw new Error('Enter both an initial longitude and latitude.');
             }
@@ -1154,6 +1163,7 @@ window.addEventListener('load', function() {
             return;
         }
 
+        bearingAdjustment = nextBearingAdjustment;
         const nextTravelStepsInDegrees = nextTravelSteps.map(([bearingText, distance]) => [
             QuadratureToBearing(bearingText),
             distance
@@ -1210,6 +1220,10 @@ window.addEventListener('load', function() {
                         <label for="initial-latitude-input">Initial Latitude from GNSS RTK:</label>
                         <input id="initial-latitude-input" type="number" step="any" value="42.439655807">
                     </div>
+                </div>
+                <div class="initial-coordinate-field">
+                    <label for="bearing-adjustment-input">Surveyor North to True North Offset</label>
+                    <input id="bearing-adjustment-input" type="number" step="any" value="-14.05">
                 </div>
                 <label for="travel-steps-input">Surveyor Plan (Bearing in quadtrature and distance in feet per line):</label>
                 <textarea id="travel-steps-input" rows="8">S 20 41 10 E, 238.64
