@@ -120,39 +120,6 @@
             fill: #333;
             pointer-events: none;
         }
-        #csv-display {
-            margin-top: 20px;
-            padding: 15px;
-            background-color: #f5f5f5;
-            border: 1px solid #ccc;
-            border-radius: 4px;
-            font-family: monospace;
-            font-size: 12px;
-            white-space: pre-line;
-            max-width: 400px;
-        }
-        #csv-display h3 {
-            margin: 0 0 10px 0;
-            font-family: sans-serif;
-        }
-        #geojson-display {
-            margin-top: 20px;
-            padding: 15px;
-            background-color: #f0f8ff;
-            border: 1px solid #4a90d9;
-            border-radius: 4px;
-            font-family: monospace;
-            font-size: 11px;
-            white-space: pre;
-            max-width: 600px;
-            max-height: 400px;
-            overflow: auto;
-        }
-        #geojson-display h3 {
-            margin: 0 0 10px 0;
-            font-family: sans-serif;
-            color: #2c5aa0;
-        }
         .area-label {
             font-size: 14px;
             font-family: sans-serif;
@@ -1445,8 +1412,6 @@ window.addEventListener('load', function() {
             (bearing + bearingAdjustment) % 360,
             distance
         ]);
-        const adjustedPathCoordinates = calculatePath(nextInitialLat, nextInitialLon, adjustedTravelSteps);
-
         plotMultiplePathsWithGeoJSON(
             nextInitialLat, nextInitialLon, [adjustedTravelSteps], ['blue', 'red'],
             "svg-container", 3000, 2000, [0, 0], nextBoundsGeoJSON, 'green', coordinatePolygon
@@ -1456,35 +1421,6 @@ window.addEventListener('load', function() {
         initialLat = nextInitialLat;
         travelSteps = nextTravelSteps;
         boundsGeoJSON = nextBoundsGeoJSON;
-
-        const csvDisplay = document.getElementById('csv-content');
-        if (csvDisplay) {
-            let csvText = 'Lat, Lon, Alt\n';
-            adjustedPathCoordinates.forEach(point => {
-                csvText += `${point.lat.toFixed(8)}, ${point.lon.toFixed(8)}, 0\n`;
-            });
-            csvDisplay.textContent = csvText;
-        }
-
-        const geojsonDisplay = document.getElementById('geojson-content');
-        if (geojsonDisplay) {
-            const geoJSON = {
-                type: "FeatureCollection",
-                name: "pathVertices",
-                features: adjustedPathCoordinates.map((point, index) => ({
-                    type: "Feature",
-                    properties: {
-                        vertexIndex: index,
-                        REMARKS: index === 0 ? "Start point" : `Vertex ${index}`
-                    },
-                    geometry: {
-                        type: "Point",
-                        coordinates: [parseFloat(point.lon.toFixed(8)), parseFloat(point.lat.toFixed(8)), 0]
-                    }
-                }))
-            };
-            geojsonDisplay.textContent = JSON.stringify(geoJSON, null, 2);
-        }
 
         coordinateStatus.textContent = coordinatePolygon.length
             ? `Plotted ${nextTravelSteps.length} travel steps and a polygon with ${coordinatePolygon.length} points.`
@@ -1611,15 +1547,5 @@ window.addEventListener('load', function() {
         <p id="coordinate-polygon-status" role="status" aria-live="polite"></p>
     </section>
     <div id="svg-container"></div>
-    
-    <div id="csv-display">
-        <h3>Path Vertices (CSV)</h3>
-        <pre id="csv-content"></pre>
-    </div>
-    
-    <div id="geojson-display">
-        <h3>Path Vertices (GeoJSON)</h3>
-        <pre id="geojson-content"></pre>
-    </div>
 </body>
 </html>
