@@ -45,10 +45,22 @@
         #coordinate-polygon-controls {
             margin: 20px 0;
         }
-        #coordinate-polygon-input {
+        .coordinate-inputs {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 16px;
+        }
+        .coordinate-input-group {
+            flex: 1 1 400px;
+            max-width: 600px;
+        }
+        .coordinate-input-group label {
+            display: block;
+        }
+        .coordinate-input-group textarea {
             display: block;
             box-sizing: border-box;
-            width: min(100%, 600px);
+            width: 100%;
             margin: 6px 0 10px;
             font-family: monospace;
         }
@@ -184,6 +196,37 @@ function QuadratureToBearing(quad) {
     }
 
     return bearing % 360;
+}
+
+function parseTravelSteps(input) {
+    const steps = [];
+    const decimalPattern = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/;
+
+    input.split(/\r?\n/).forEach((line, index) => {
+        if (!line.trim()) {
+            return;
+        }
+
+        const parsed = line.trim().match(
+            /^([NS]\s*\d+(?:\s+|:)\d+(?:\s+|:)\d+\s*[EW])"?\s*,\s*([+-]?(?:\d+(?:\.\d*)?|\.\d+))$/i
+        );
+        if (!parsed || !decimalPattern.test(parsed[2])) {
+            throw new Error(`Line ${index + 1} must contain a bearing and distance, separated by a comma.`);
+        }
+
+        const bearingText = parsed[1].trim().replace(/\s+/g, ' ');
+        if (QuadratureToBearing(bearingText) === null) {
+            throw new Error(`Line ${index + 1} has an invalid quadrant bearing.`);
+        }
+
+        steps.push([bearingText, Number(parsed[2])]);
+    });
+
+    if (steps.length === 0) {
+        throw new Error('Enter at least one travel step.');
+    }
+
+    return steps;
 }
 
 /**
@@ -1304,30 +1347,7 @@ function plotPathInSVG(pathPoints, containerId, svgWidth, svgHeight, pathColor =
         const initialLat = 42.439655807; // 121 Page Brook Rd
         const initialLon = -71.155536538;
         
-        // Steps: [Quadrant Bearing (N/S degrees minutes seconds E/W), Distance in Feet]
-        const travelSteps = [
-            ["S 20 41 10 E", 278.14],
-            ["S 8 14 52 E", 39.5],
-            ["N 81 45 8 E", 120.33],
-            ["S 72 4 14 E", 106.47],
-            ["N 5 37 25 W", 123.72],
-            ["S 23 12 2 E", -104.31],
-            ["S 45 37 11 E", -165.42]
-        ];
-
-        const travelStepsInDegrees = travelSteps.map(([bearingText, distance], index) => {
-            const bearing = typeof bearingText === 'number'
-                ? bearingText
-                : QuadratureToBearing(bearingText);
-            if (!Number.isFinite(bearing)) {
-                throw new Error(`Invalid bearing in travelSteps row ${index + 1}: ${bearingText}`);
-            }
-            return [bearing, distance];
-        });
-        
-        // 1. Calculate the geographic coordinates for the path (for logging purposes)
-        const pathCoordinates = calculatePath(initialLat, initialLon, travelStepsInDegrees);
-        console.log("Calculated Path Coordinates:", pathCoordinates);
+        let travelSteps = [];
         
         // GeoJSON data for boundary points
         const boundsGeoJSON = {
@@ -1397,78 +1417,81 @@ function plotPathInSVG(pathPoints, containerId, svgWidth, svgHeight, pathColor =
             ]
         };
 window.addEventListener('load', function() {
-    // Your JavaScript code here will run after ALL resources on the page are loaded.
     console.log('The entire page, including all resources, has fully loaded!');
 
-    // Apply the same bearing adjustment used for plotting
     const bearingAdjustment = -14.05;
-    const adjustedTravelSteps = travelStepsInDegrees.map((step) => {
-        const [bearing, distance] = step;
-        const adjustedBearing = (bearing + bearingAdjustment) % 360;
-        return [adjustedBearing, distance];
-    });
-    const adjustedPathCoordinates = calculatePath(initialLat, initialLon, adjustedTravelSteps);
-    
-    // Log the adjusted coordinates to verify
-    console.log("Adjusted Path Coordinates:", adjustedPathCoordinates);
-    
     const coordinateInput = document.getElementById('coordinate-polygon-input');
+    const travelStepsInput = document.getElementById('travel-steps-input');
     const coordinateStatus = document.getElementById('coordinate-polygon-status');
-    const plotAll = (coordinatePolygon = []) => {
-        plotMultiplePathsWithGeoJSON(
-            initialLat, initialLon, [adjustedTravelSteps], ['blue', 'red'],
-            "svg-container", 3000, 2000, [0, 0], boundsGeoJSON, 'green', coordinatePolygon
-        );
-    };
-    document.getElementById('plot-coordinate-polygon').addEventListener('click', () => {
-        let points;
+
+    const refreshPlot = () => {
+        let nextTravelSteps;
+        let coordinatePolygon;
         try {
-            points = parseCoordinateRows(coordinateInput.value);
+            nextTravelSteps = parseTravelSteps(travelStepsInput.value);
+            coordinatePolygon = coordinateInput.value.trim()
+                ? parseCoordinateRows(coordinateInput.value)
+                : [];
         } catch (error) {
             coordinateStatus.textContent = error.message;
             coordinateStatus.dataset.error = 'true';
             return;
         }
 
-        plotAll(points);
-        coordinateStatus.textContent = `Plotted polygon with ${points.length} points.`;
-        coordinateStatus.dataset.error = 'false';
-    });
+        const nextTravelStepsInDegrees = nextTravelSteps.map(([bearingText, distance]) => [
+            QuadratureToBearing(bearingText),
+            distance
+        ]);
+        const adjustedTravelSteps = nextTravelStepsInDegrees.map(([bearing, distance]) => [
+            (bearing + bearingAdjustment) % 360,
+            distance
+        ]);
+        const adjustedPathCoordinates = calculatePath(initialLat, initialLon, adjustedTravelSteps);
 
-    // Plot the original paths and points on initial page load.
-    plotAll();
-    
-    // 3. Populate CSV display with path vertices (using adjusted coordinates)
-    const csvDisplay = document.getElementById('csv-content');
-    if (csvDisplay) {
-        let csvText = 'Lat, Lon, Alt\n';
-        adjustedPathCoordinates.forEach((point, index) => {
-            // Alt is 0 since calculatePath doesn't track altitude
-            csvText += `${point.lat.toFixed(8)}, ${point.lon.toFixed(8)}, 0\n`;
-        });
-        csvDisplay.textContent = csvText;
-    }
-    
-    // 4. Populate GeoJSON display with path vertices (using adjusted coordinates)
-    const geojsonDisplay = document.getElementById('geojson-content');
-    if (geojsonDisplay) {
-        const geoJSON = {
-            type: "FeatureCollection",
-            name: "pathVertices",
-            features: adjustedPathCoordinates.map((point, index) => ({
-                type: "Feature",
-                properties: {
-                    vertexIndex: index,
-                    REMARKS: index === 0 ? "Start point" : `Vertex ${index}`
-                },
-                geometry: {
-                    type: "Point",
-                    coordinates: [parseFloat(point.lon.toFixed(8)), parseFloat(point.lat.toFixed(8)), 0]
-                }
-            }))
-        };
-        geojsonDisplay.textContent = JSON.stringify(geoJSON, null, 2);
-    }
+        plotMultiplePathsWithGeoJSON(
+            initialLat, initialLon, [adjustedTravelSteps], ['blue', 'red'],
+            "svg-container", 3000, 2000, [0, 0], boundsGeoJSON, 'green', coordinatePolygon
+        );
+
+        travelSteps = nextTravelSteps;
+
+        const csvDisplay = document.getElementById('csv-content');
+        if (csvDisplay) {
+            let csvText = 'Lat, Lon, Alt\n';
+            adjustedPathCoordinates.forEach(point => {
+                csvText += `${point.lat.toFixed(8)}, ${point.lon.toFixed(8)}, 0\n`;
+            });
+            csvDisplay.textContent = csvText;
+        }
+
+        const geojsonDisplay = document.getElementById('geojson-content');
+        if (geojsonDisplay) {
+            const geoJSON = {
+                type: "FeatureCollection",
+                name: "pathVertices",
+                features: adjustedPathCoordinates.map((point, index) => ({
+                    type: "Feature",
+                    properties: {
+                        vertexIndex: index,
+                        REMARKS: index === 0 ? "Start point" : `Vertex ${index}`
+                    },
+                    geometry: {
+                        type: "Point",
+                        coordinates: [parseFloat(point.lon.toFixed(8)), parseFloat(point.lat.toFixed(8)), 0]
+                    }
+                }))
+            };
+            geojsonDisplay.textContent = JSON.stringify(geoJSON, null, 2);
+        }
+
+        coordinateStatus.textContent = coordinatePolygon.length
+            ? `Plotted ${nextTravelSteps.length} travel steps and a polygon with ${coordinatePolygon.length} points.`
+            : `Plotted ${nextTravelSteps.length} travel steps.`;
+        coordinateStatus.dataset.error = 'false';
+    };
+
+    document.getElementById('plot-coordinate-polygon').addEventListener('click', refreshPlot);
+    refreshPlot();
 });
         
     </script>
@@ -1476,9 +1499,33 @@ window.addEventListener('load', function() {
 <body>
     <h1>Calculated Path Plot</h1>
     <section id="coordinate-polygon-controls" aria-labelledby="coordinate-polygon-heading">
-        <h2 id="coordinate-polygon-heading">Plot a Polygon from Coordinates</h2>
-        <label for="coordinate-polygon-input">Enter one longitude, latitude pair per line:</label>
-        <textarea id="coordinate-polygon-input" rows="6" placeholder="-71.325258936, 42.525833647&#10;-71.324317107, 42.525693220&#10;-71.322824838, 42.525812945"></textarea>
+        <h2 id="coordinate-polygon-heading">Plot from Coordinates and Travel Steps</h2>
+        <div class="coordinate-inputs">
+            <div class="coordinate-input-group">
+                <label for="coordinate-polygon-input">Polygon coordinates (longitude, latitude per line):</label>
+                <textarea id="coordinate-polygon-input" rows="8" placeholder="">-71.1555172, 42.4396526
+                    -71.155992728, 42.440247121
+                    -71.15603184,42.4403281
+                    -71.1564898, 42.4402085
+                    -71.1564997, 42.4402296
+                    -71.1569373, 42.4402431
+                    -71.1568104, 42.4398960
+                    -71.1565212, 42.4396296
+                    -71.1560092,42.4394223
+                </textarea>
+            </div>
+            <div class="coordinate-input-group">
+                <label for="travel-steps-input">Travel steps (bearing, distance per line):</label>
+                <textarea id="travel-steps-input" rows="8">S 20 41 10 E", 278.14
+                    S 8 14 52 E, 39.5
+                    N 81 45 8 E, 120.33
+                    S 72 4 14 E, 106.47
+                    N 5 37 25 W, 123.72
+                    S 23 12 2 E, -104.31
+                    S 45 37 11 E, -165.42
+                </textarea>
+            </div>
+        </div>
         <button id="plot-coordinate-polygon" type="button">Refresh</button>
         <p id="coordinate-polygon-status" role="status" aria-live="polite"></p>
     </section>
