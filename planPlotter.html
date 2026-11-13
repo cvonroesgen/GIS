@@ -932,6 +932,36 @@ function plotMultiplePathsWithGeoJSON(startLat, startLon, allSteps, colors, cont
             markersGroup.id = 'user-markers';
             svg.appendChild(markersGroup);
             let markerCount = 0;
+
+            const createUserMarker = (coords) => {
+                const geo = toGeoCoords(coords.x, coords.y);
+                markerCount++;
+
+                const currentScale = viewBox.w / originalViewBox.w;
+                const marker = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+                marker.classList.add('clicked-marker');
+                marker.setAttribute('cx', coords.x);
+                marker.setAttribute('cy', coords.y);
+                marker.setAttribute('r', baseSizes.clickedMarker * currentScale);
+                marker.setAttribute('data-lat', geo.lat.toFixed(8));
+                marker.setAttribute('data-lon', geo.lon.toFixed(8));
+                marker.setAttribute('data-id', markerCount);
+
+                const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+                label.classList.add('marker-label');
+                label.setAttribute('x', coords.x + 10);
+                label.setAttribute('y', coords.y + 4);
+                label.innerHTML = `Lat: ${geo.lat.toFixed(6)}<tspan x="${coords.x + 10}" dy="12">Lon: ${geo.lon.toFixed(6)}</tspan>`;
+
+                markersGroup.appendChild(marker);
+                markersGroup.appendChild(label);
+
+                marker.addEventListener('click', (evt) => {
+                    evt.stopPropagation();
+                    markersGroup.removeChild(marker);
+                    markersGroup.removeChild(label);
+                });
+            };
             
             svg.addEventListener('mousedown', (e) => {
                 if (e.button === 0) { // Left mouse button
@@ -967,41 +997,7 @@ function plotMultiplePathsWithGeoJSON(startLat, startLon, allSteps, colors, cont
             svg.addEventListener('mouseup', (e) => {
                 if (e.button === 0) {
                     if (!hasDragged) {
-                        // This was a click, not a drag - place a marker
-                        const coords = getSVGCoords(e);
-                        const geo = toGeoCoords(coords.x, coords.y);
-                        
-                        markerCount++;
-                        
-                        // Calculate current scale for proper sizing
-                        const currentScale = viewBox.w / originalViewBox.w;
-                        
-                        // Create marker circle
-                        const marker = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-                        marker.classList.add('clicked-marker');
-                        marker.setAttribute('cx', coords.x);
-                        marker.setAttribute('cy', coords.y);
-                        marker.setAttribute('r', baseSizes.clickedMarker * currentScale);
-                        marker.setAttribute('data-lat', geo.lat.toFixed(8));
-                        marker.setAttribute('data-lon', geo.lon.toFixed(8));
-                        marker.setAttribute('data-id', markerCount);
-                        
-                        // Create label
-                        const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-                        label.classList.add('marker-label');
-                        label.setAttribute('x', coords.x + 10);
-                        label.setAttribute('y', coords.y + 4);
-                        label.innerHTML = `Lat: ${geo.lat.toFixed(6)}<tspan x="${coords.x + 10}" dy="12">Lon: ${geo.lon.toFixed(6)}</tspan>`;
-                        
-                        markersGroup.appendChild(marker);
-                        markersGroup.appendChild(label);
-                        
-                        // Add click handler to remove marker
-                        marker.addEventListener('click', (evt) => {
-                            evt.stopPropagation();
-                            markersGroup.removeChild(marker);
-                            markersGroup.removeChild(label);
-                        });
+                        createUserMarker(getSVGCoords(e));
                     }
                     isPanning = false;
                     svg.style.cursor = 'grab';
@@ -1024,7 +1020,7 @@ function plotMultiplePathsWithGeoJSON(startLat, startLon, allSteps, colors, cont
             let measureLine = document.createElementNS('http://www.w3.org/2000/svg', 'line');
             measureLine.classList.add('measure-line');
             measureLine.style.display = 'none';
-            svg.appendChild(measureLine);
+            svg.insertBefore(measureLine, markersGroup);
             
             let measureLabel = document.getElementById('measure-label');
             if (!measureLabel) {
@@ -1036,6 +1032,7 @@ function plotMultiplePathsWithGeoJSON(startLat, startLon, allSteps, colors, cont
             
             let isMeasuring = false;
             let measureStart = { x: 0, y: 0 };
+            let measureStartClient = { x: 0, y: 0 };
             
             // Calculate distance between two geo points in feet
             const calculateDistanceFeet = (lat1, lon1, lat2, lon2) => {
@@ -1079,6 +1076,21 @@ function plotMultiplePathsWithGeoJSON(startLat, startLon, allSteps, colors, cont
                 }
                 return `${wholeFeet}' ${inches}"`;
             };
+
+            const updateMeasurement = (coords, e) => {
+                measureLine.setAttribute('x2', coords.x);
+                measureLine.setAttribute('y2', coords.y);
+
+                const startGeo = toGeoCoords(measureStart.x, measureStart.y);
+                const endGeo = toGeoCoords(coords.x, coords.y);
+                const distanceFeet = calculateDistanceFeet(startGeo.lat, startGeo.lon, endGeo.lat, endGeo.lon);
+                const bearing = calculateBearing(startGeo.lat, startGeo.lon, endGeo.lat, endGeo.lon);
+
+                measureLabel.textContent = `${formatDistance(distanceFeet)} @ ${bearing.toFixed(1)}°`;
+                measureLabel.style.display = 'block';
+                measureLabel.style.left = (e.pageX + 20) + 'px';
+                measureLabel.style.top = (e.pageY - 10) + 'px';
+            };
             
             // Prevent context menu on right-click
             svg.addEventListener('contextmenu', (e) => {
@@ -1091,6 +1103,7 @@ function plotMultiplePathsWithGeoJSON(startLat, startLon, allSteps, colors, cont
                     isMeasuring = true;
                     const coords = getSVGCoords(e);
                     measureStart = coords;
+                    measureStartClient = { x: e.clientX, y: e.clientY };
                     
                     measureLine.setAttribute('x1', coords.x);
                     measureLine.setAttribute('y1', coords.y);
@@ -1103,21 +1116,7 @@ function plotMultiplePathsWithGeoJSON(startLat, startLon, allSteps, colors, cont
             svg.addEventListener('mousemove', (e) => {
                 if (!isMeasuring) return;
                 
-                const coords = getSVGCoords(e);
-                measureLine.setAttribute('x2', coords.x);
-                measureLine.setAttribute('y2', coords.y);
-                
-                // Calculate distance and bearing
-                const startGeo = toGeoCoords(measureStart.x, measureStart.y);
-                const endGeo = toGeoCoords(coords.x, coords.y);
-                const distanceFeet = calculateDistanceFeet(startGeo.lat, startGeo.lon, endGeo.lat, endGeo.lon);
-                const bearing = calculateBearing(startGeo.lat, startGeo.lon, endGeo.lat, endGeo.lon);
-                
-                // Update label with distance and bearing
-                measureLabel.textContent = `${formatDistance(distanceFeet)} @ ${bearing.toFixed(1)}°`;
-                measureLabel.style.display = 'block';
-                measureLabel.style.left = (e.pageX + 20) + 'px';
-                measureLabel.style.top = (e.pageY - 10) + 'px';
+                updateMeasurement(getSVGCoords(e), e);
             });
             
             const stopMeasuring = () => {
@@ -1129,8 +1128,24 @@ function plotMultiplePathsWithGeoJSON(startLat, startLon, allSteps, colors, cont
             };
             
             svg.addEventListener('mouseup', (e) => {
-                if (e.button === 2) {
-                    stopMeasuring();
+                if (e.button === 2 && isMeasuring) {
+                    const coords = getSVGCoords(e);
+                    updateMeasurement(coords, e);
+                    const dragDistance = Math.hypot(
+                        e.clientX - measureStartClient.x,
+                        e.clientY - measureStartClient.y
+                    );
+                    isMeasuring = false;
+                    if (dragDistance > dragThreshold) {
+                        createUserMarker(coords);
+                        const midpointX = (measureStartClient.x + e.clientX) / 2;
+                        const midpointY = (measureStartClient.y + e.clientY) / 2;
+                        measureLabel.style.left = (midpointX + window.scrollX + 10) + 'px';
+                        measureLabel.style.top = (midpointY + window.scrollY - 30) + 'px';
+                    } else {
+                        measureLine.style.display = 'none';
+                        measureLabel.style.display = 'none';
+                    }
                 }
             });
             
