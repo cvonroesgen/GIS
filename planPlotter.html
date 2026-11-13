@@ -58,12 +58,6 @@
         #coordinate-polygon-status[data-error="true"] {
             color: #b00020;
         }
-        #coordinate-polygon-container svg {
-            display: block;
-            width: min(100%, 1000px);
-            height: auto;
-            border: 1px solid #ccc;
-        }
         .measure-line {
             stroke: #ff6600;
             stroke-width: 3;
@@ -153,6 +147,45 @@
     </style>
     <script>
         // Paste 'calculatePath' and 'plotPathInSVG' functions here
+function QuadratureToBearing(quad) {
+    const parsed = typeof quad === 'string'
+        ? quad.trim().match(/^([NS])\s*(\d+)(?:\s+|:)(\d+)(?:\s+|:)(\d+)\s*([EW])$/i)
+        : null;
+    if (!parsed) {
+        return null;
+    }
+
+    const latDir = parsed[1].toUpperCase();
+    const degrees = Number(parsed[2]);
+    const minutes = Number(parsed[3]);
+    const seconds = Number(parsed[4]);
+    const lonDir = parsed[5].toUpperCase();
+
+    if (
+        minutes >= 60 ||
+        seconds >= 60 ||
+        degrees > 90 ||
+        (degrees === 90 && (minutes !== 0 || seconds !== 0))
+    ) {
+        return null;
+    }
+
+    const decimalDegrees = degrees + minutes / 60 + seconds / 3600;
+    let bearing;
+
+    if (latDir === 'N' && lonDir === 'E') {
+        bearing = decimalDegrees;
+    } else if (latDir === 'S' && lonDir === 'E') {
+        bearing = 180 - decimalDegrees;
+    } else if (latDir === 'S' && lonDir === 'W') {
+        bearing = 180 + decimalDegrees;
+    } else {
+        bearing = 360 - decimalDegrees;
+    }
+
+    return bearing % 360;
+}
+
 /**
  * Calculates a series of destination points from a starting point
  * based on an array of [distanceFeet, bearingDegrees] steps.
@@ -488,55 +521,6 @@ function parseCoordinateRows(input) {
     return points;
 }
 
-function renderCoordinatePolygon(points) {
-    const svgWidth = 1000;
-    const svgHeight = 650;
-    const padding = 50;
-    const minLon = Math.min(...points.map(point => point.lon));
-    const maxLon = Math.max(...points.map(point => point.lon));
-    const minLat = Math.min(...points.map(point => point.lat));
-    const maxLat = Math.max(...points.map(point => point.lat));
-    const range = Math.max(maxLon - minLon, maxLat - minLat) || 1;
-    const scale = Math.min(svgWidth - padding * 2, svgHeight - padding * 2) / range;
-    const offsetX = (svgWidth - (maxLon - minLon) * scale) / 2;
-    const offsetY = (svgHeight - (maxLat - minLat) * scale) / 2;
-    const toSvgPoint = point => ({
-        x: offsetX + (point.lon - minLon) * scale,
-        y: svgHeight - offsetY - (point.lat - minLat) * scale
-    });
-    const svgNamespace = 'http://www.w3.org/2000/svg';
-    const svg = document.createElementNS(svgNamespace, 'svg');
-    svg.setAttribute('viewBox', `0 0 ${svgWidth} ${svgHeight}`);
-    svg.setAttribute('role', 'img');
-    svg.setAttribute('aria-label', `Polygon with ${points.length} coordinate points`);
-
-    const polygon = document.createElementNS(svgNamespace, 'polygon');
-    polygon.setAttribute('points', points.map(point => {
-        const { x, y } = toSvgPoint(point);
-        return `${x.toFixed(2)},${y.toFixed(2)}`;
-    }).join(' '));
-    polygon.setAttribute('fill', 'rgba(0, 102, 204, 0.2)');
-    polygon.setAttribute('stroke', '#0066cc');
-    polygon.setAttribute('stroke-width', '3');
-    svg.appendChild(polygon);
-
-    points.forEach((point, index) => {
-        const { x, y } = toSvgPoint(point);
-        const marker = document.createElementNS(svgNamespace, 'circle');
-        marker.setAttribute('cx', x.toFixed(2));
-        marker.setAttribute('cy', y.toFixed(2));
-        marker.setAttribute('r', '5');
-        marker.setAttribute('fill', '#0066cc');
-
-        const title = document.createElementNS(svgNamespace, 'title');
-        title.textContent = `Point ${index + 1}: ${point.lon}, ${point.lat}`;
-        marker.appendChild(title);
-        svg.appendChild(marker);
-    });
-
-    document.getElementById('coordinate-polygon-container').replaceChildren(svg);
-}
-
 /**
  * Parses a GeoJSON FeatureCollection and extracts Point features.
  *
@@ -577,7 +561,7 @@ function parseGeoJSONPoints(geoJSON) {
  * @param {string|Object} geoJSON - Optional GeoJSON data to plot.
  * @param {string} geoJSONColor - Color for GeoJSON points (default: 'green').
  */
-function plotMultiplePathsWithGeoJSON(startLat, startLon, allSteps, colors, containerId, svgWidth, svgHeight, bearingAdjustments = 0, geoJSON = null, geoJSONColor = 'green') {
+function plotMultiplePathsWithGeoJSON(startLat, startLon, allSteps, colors, containerId, svgWidth, svgHeight, bearingAdjustments = 0, geoJSON = null, geoJSONColor = 'green', coordinatePolygon = []) {
     // Normalize bearingAdjustments to an array
     const adjustments = Array.isArray(bearingAdjustments) 
         ? bearingAdjustments 
@@ -598,7 +582,11 @@ function plotMultiplePathsWithGeoJSON(startLat, startLon, allSteps, colors, cont
     
     // Flatten all points to calculate a combined bounding box
     const allPathPoints = allPaths.flat();
-    const allPoints = [...allPathPoints, ...geoJSONPoints.map(p => ({ lat: p.lat, lon: p.lon }))];
+    const allPoints = [
+        ...allPathPoints,
+        ...geoJSONPoints.map(p => ({ lat: p.lat, lon: p.lon })),
+        ...coordinatePolygon.map(p => ({ lat: p.lat, lon: p.lon }))
+    ];
     
     if (allPoints.length < 1) {
         console.warn("Need at least one point to draw.");
@@ -668,6 +656,31 @@ function plotMultiplePathsWithGeoJSON(startLat, startLon, allSteps, colors, cont
             `;
         });
     });
+
+    if (coordinatePolygon.length > 0) {
+        const polygonPoints = coordinatePolygon.map(point => toSVGPoint(point.lat, point.lon)).join(' ');
+        pathsMarkup += `
+            <polygon
+                class="coordinate-polygon"
+                points="${polygonPoints}"
+                style="fill:rgba(0, 102, 204, 0.2); stroke:#0066cc; stroke-width:3" />
+        `;
+
+        coordinatePolygon.forEach((point, index) => {
+            const [cx, cy] = toSVGPoint(point.lat, point.lon).split(',');
+            pathsMarkup += `
+                <circle class="vertex-circle"
+                        cx="${cx}"
+                        cy="${cy}"
+                        r="5"
+                        fill="#0066cc"
+                        data-lat="${point.lat.toFixed(8)}"
+                        data-lon="${point.lon.toFixed(8)}"
+                        data-path="coordinates"
+                        data-point="${index}" />
+            `;
+        });
+    }
     
     // --- 4. Generate SVG Markup for GeoJSON Points ---
     geoJSONPoints.forEach((p, index) => {
@@ -817,6 +830,7 @@ function plotMultiplePathsWithGeoJSON(startLat, startLon, allSteps, colors, cont
                 geojsonPoint: 6,
                 clickedMarker: 6,
                 polylineStroke: 2,
+                coordinatePolygonStroke: 3,
                 measureLineStroke: 3,
                 hoverStroke: 2,
                 areaLabelFont: 14,
@@ -847,6 +861,10 @@ function plotMultiplePathsWithGeoJSON(startLat, startLon, allSteps, colors, cont
                 // Update polyline stroke widths
                 svg.querySelectorAll('polyline').forEach(polyline => {
                     polyline.style.strokeWidth = baseSizes.polylineStroke * scale;
+                });
+                
+                svg.querySelectorAll('.coordinate-polygon').forEach(polygon => {
+                    polygon.style.strokeWidth = baseSizes.coordinatePolygonStroke * scale;
                 });
                 
                 // Update measure line stroke width
@@ -1283,222 +1301,125 @@ function plotPathInSVG(pathPoints, containerId, svgWidth, svgHeight, pathColor =
 }
         // --- Example Data ---
         // Start: An arbitrary point
-        const initialLat = 42.525695108; // 121 Page Brook Rd
-        const initialLon = -71.324314753;
+        const initialLat = 42.439655807; // 121 Page Brook Rd
+        const initialLon = -71.155536538;
         
-        // Steps: [Bearing in Degrees, Distance in Feet]
+        // Steps: [Quadrant Bearing (N/S degrees minutes seconds E/W), Distance in Feet]
         const travelSteps = [
-            [288.2061111111,	170.950000000000000],
-            [257.2422222222,	58.310000000000000],
-            [306.6427777778,	218.960000000000000],
-            [187.0708333333,	111.000000000000000],
-            [119.9402777778,	96.260000000000000],
-            [230.8472222222,	96.440000000000000],
-            [267.9361111111,	154.590000000000000],
-            [141.1083333333,	250.000000000000000],
-            [97.2472222222,	115.240000000000000],
-            [48.6777777778,	388.900000000000000]
+            ["S 20 41 10 E", 278.14],
+            ["S 8 14 52 E", 39.5],
+            ["N 81 45 8 E", 120.33],
+            ["S 72 4 14 E", 106.47],
+            ["N 5 37 25 W", 123.72],
+            ["S 23 12 2 E", -104.31],
+            ["S 45 37 11 E", -165.42]
         ];
+
+        const travelStepsInDegrees = travelSteps.map(([bearingText, distance], index) => {
+            const bearing = typeof bearingText === 'number'
+                ? bearingText
+                : QuadratureToBearing(bearingText);
+            if (!Number.isFinite(bearing)) {
+                throw new Error(`Invalid bearing in travelSteps row ${index + 1}: ${bearingText}`);
+            }
+            return [bearing, distance];
+        });
         
         // 1. Calculate the geographic coordinates for the path (for logging purposes)
-        const pathCoordinates = calculatePath(initialLat, initialLon, travelSteps);
+        const pathCoordinates = calculatePath(initialLat, initialLon, travelStepsInDegrees);
         console.log("Calculated Path Coordinates:", pathCoordinates);
         
         // GeoJSON data for boundary points
         const boundsGeoJSON = {
-	"type": "FeatureCollection",
-	"name": "bounds",
-	"features": [
-		{
-			"type": "Feature",
-			"properties": {
-				"REMARKS": "Gary's lot corner with Dave thomas"
-			},
-			"geometry": {
-				"type": "Point",
-				"coordinates": [
-					-71.325258936,
-					42.525833647,
-					9.198
-				]
-			}
-		},
-		{
-			"type": "Feature",
-			"properties": {
-				"REMARKS": "rtk fix at mailbox"
-			},
-			"geometry": {
-				"type": "Point",
-				"coordinates": [
-					-71.324317107,
-					42.52569322,
-					20.856
-				]
-			}
-		},
-		{
-			"type": "Feature",
-			"properties": {
-				"REMARKS": "rtk fix at Southeast corner"
-			},
-			"geometry": {
-				"type": "Point",
-				"coordinates": [
-					-71.322824838,
-					42.525812945,
-					25.495
-				]
-			}
-		},
-		{
-			"type": "Feature",
-			"properties": {
-				"REMARKS": "rtk fix at Southeast corner"
-			},
-			"geometry": {
-				"type": "Point",
-				"coordinates": [
-					-71.322825053,
-					42.525813375,
-					25.509
-				]
-			}
-		},
-		{
-			"type": "Feature",
-			"properties": {
-				"REMARKS": "rtk fix at mailbox"
-			},
-			"geometry": {
-				"type": "Point",
-				"coordinates": [
-					-71.324314853,
-					42.525695782,
-					20.33
-				]
-			}
-		},
-		{
-			"type": "Feature",
-			"properties": {
-				"REMARKS": "rtk fix that mailbox"
-			},
-			"geometry": {
-				"type": "Point",
-				"coordinates": [
-					-71.324314888,
-					42.525695552,
-					20.321
-				]
-			}
-		},
-		{
-			"type": "Feature",
-			"properties": {
-				"REMARKS": "rtk fix it! mailbox"
-			},
-			"geometry": {
-				"type": "Point",
-				"coordinates": [
-					-71.324314552,
-					42.525695267,
-					20.288
-				]
-			}
-		},
-		{
-			"type": "Feature",
-			"properties": {
-				"REMARKS": "rtk fix that mailbox"
-			},
-			"geometry": {
-				"type": "Point",
-				"coordinates": [
-					-71.324314825,
-					42.525695613,
-					20.303
-				]
-			}
-		},
-		{
-			"type": "Feature",
-			"properties": {
-				"REMARKS": "rtk fix at mailbox"
-			},
-			"geometry": {
-				"type": "Point",
-				"coordinates": [
-					-71.324314753,
-					42.525695108,
-					18.03
-				]
-			}
-		},
-		{
-			"type": "Feature",
-			"properties": {
-				"REMARKS": "rtk fix at Gary"
-			},
-			"geometry": {
-				"type": "Point",
-				"coordinates": [
-					-71.32449497,
-					42.526164848,
-					23.308
-				]
-			}
-		},
-		{
-			"type": "Feature",
-			"properties": {
-				"REMARKS": "rtk fix at Gary"
-			},
-			"geometry": {
-				"type": "Point",
-				"coordinates": [
-					-71.324495125,
-					42.526164933,
-					23.31
-				]
-			}
-		},
-		{
-			"type": "Feature",
-			"properties": {
-				"REMARKS": "rtk fix at Gary"
-			},
-			"geometry": {
-				"type": "Point",
-				"coordinates": [
-					-71.324495008,
-					42.52616504,
-					23.31
-				]
-			}
-		},
-		{
-			"type": "Feature",
-			"properties": {
-				"REMARKS": "rtk fix at Gary"
-			},
-			"geometry": {
-				"type": "Point",
-				"coordinates": [
-					-71.324494973,
-					42.526165187,
-					23.333
-				]
-			}
-		}
-	]
-};
+            "type": "FeatureCollection",
+            "name": "Points Layer",
+            "features": [
+                {
+                    "type": "Feature",
+                    "properties": {
+                        "REMARKS": ""
+                    },
+                    "geometry": {
+                        "type": "Point",
+                        "coordinates": [-71.155536538, 42.439655807, 10.641]
+                    }
+                },
+                {
+                    "type": "Feature",
+                    "properties": {
+                        "REMARKS": "Southwest corner of living room"
+                    },
+                    "geometry": {
+                        "type": "Point",
+                        "coordinates": [-71.156429428, 42.439677883, 20.731]
+                    }
+                },
+                {
+                    "type": "Feature",
+                    "properties": {
+                        "REMARKS": "Southwest corner"
+                    },
+                    "geometry": {
+                        "type": "Point",
+                        "coordinates": [-71.156517093, 42.439631067, 18.136]
+                    }
+                },
+                {
+                    "type": "Feature",
+                    "properties": {
+                        "REMARKS": "gnss fix"
+                    },
+                    "geometry": {
+                        "type": "Point",
+                        "coordinates": [-71.15651659, 42.439623797, 21.549]
+                    }
+                },
+                {
+                    "type": "Feature",
+                    "properties": {
+                        "REMARKS": "cement block South McCall"
+                    },
+                    "geometry": {
+                        "type": "Point",
+                        "coordinates": [-71.156004068, 42.439418953, 11.626]
+                    }
+                },
+                {
+                    "type": "Feature",
+                    "properties": {
+                        "REMARKS": "54 steak"
+                    },
+                    "geometry": {
+                        "type": "Point",
+                        "coordinates": [-71.156484998, 42.440174857, 22.418]
+                    }
+                }
+            ]
+        };
 window.addEventListener('load', function() {
     // Your JavaScript code here will run after ALL resources on the page are loaded.
     console.log('The entire page, including all resources, has fully loaded!');
 
+    // Apply the same bearing adjustment used for plotting
+    const bearingAdjustment = -14.05;
+    const adjustedTravelSteps = travelStepsInDegrees.map((step) => {
+        const [bearing, distance] = step;
+        const adjustedBearing = (bearing + bearingAdjustment) % 360;
+        return [adjustedBearing, distance];
+    });
+    const adjustedPathCoordinates = calculatePath(initialLat, initialLon, adjustedTravelSteps);
+    
+    // Log the adjusted coordinates to verify
+    console.log("Adjusted Path Coordinates:", adjustedPathCoordinates);
+    
     const coordinateInput = document.getElementById('coordinate-polygon-input');
     const coordinateStatus = document.getElementById('coordinate-polygon-status');
+    const plotAll = (coordinatePolygon = []) => {
+        plotMultiplePathsWithGeoJSON(
+            initialLat, initialLon, [adjustedTravelSteps], ['blue', 'red'],
+            "svg-container", 3000, 2000, [0, 0], boundsGeoJSON, 'green', coordinatePolygon
+        );
+    };
     document.getElementById('plot-coordinate-polygon').addEventListener('click', () => {
         let points;
         try {
@@ -1509,26 +1430,13 @@ window.addEventListener('load', function() {
             return;
         }
 
-        renderCoordinatePolygon(points);
+        plotAll(points);
         coordinateStatus.textContent = `Plotted polygon with ${points.length} points.`;
         coordinateStatus.dataset.error = 'false';
     });
-    
-    // Apply the same bearing adjustment used for plotting
-    const bearingAdjustment = -14.05;
-    const adjustedTravelSteps = travelSteps.map((step) => {
-        const [bearing, distance] = step;
-        const adjustedBearing = (bearing + bearingAdjustment) % 360;
-        return [adjustedBearing, distance];
-    });
-    const adjustedPathCoordinates = calculatePath(initialLat, initialLon, adjustedTravelSteps);
-    
-    // Log the adjusted coordinates to verify
-    console.log("Adjusted Path Coordinates:", adjustedPathCoordinates);
-    
-    // 2. Plot using the pre-calculated adjusted path coordinates directly
-    // Pass the adjusted steps so the plot function calculates the same coordinates
-    plotMultiplePathsWithGeoJSON(initialLat, initialLon, [adjustedTravelSteps], ['blue', 'red'], "svg-container", 3000, 2000, [0, 0], boundsGeoJSON, 'green');
+
+    // Plot the original paths and points on initial page load.
+    plotAll();
     
     // 3. Populate CSV display with path vertices (using adjusted coordinates)
     const csvDisplay = document.getElementById('csv-content');
@@ -1571,9 +1479,8 @@ window.addEventListener('load', function() {
         <h2 id="coordinate-polygon-heading">Plot a Polygon from Coordinates</h2>
         <label for="coordinate-polygon-input">Enter one longitude, latitude pair per line:</label>
         <textarea id="coordinate-polygon-input" rows="6" placeholder="-71.325258936, 42.525833647&#10;-71.324317107, 42.525693220&#10;-71.322824838, 42.525812945"></textarea>
-        <button id="plot-coordinate-polygon" type="button">Plot Polygon</button>
+        <button id="plot-coordinate-polygon" type="button">Refresh</button>
         <p id="coordinate-polygon-status" role="status" aria-live="polite"></p>
-        <div id="coordinate-polygon-container"></div>
     </section>
     <div id="svg-container"></div>
     
