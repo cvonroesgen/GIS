@@ -147,7 +147,6 @@
         }
     </style>
     <script>
-        // Paste 'calculatePath' and 'plotPathInSVG' functions here
 function QuadratureToBearing(quad) {
     const parsed = typeof quad === 'string'
         ? quad.trim().match(/^([NS])\s*(\d+)(?:\s+|:)(\d+)(?:\s+|:)(\d+)\s*([EW])$/i)
@@ -276,141 +275,6 @@ function calculatePath(startLat, startLon, steps) {
  * @param {number} svgHeight - The desired height of the SVG canvas.
  * @param {Array<number>|number} bearingAdjustments - Array of degrees to add to bearings for each path, or single value for all paths (default: 0).
  */
-function plotMultiplePathsInSVG(startLat, startLon, allSteps, colors, containerId, svgWidth, svgHeight, bearingAdjustments = 0) {
-    if (allSteps.length === 0) {
-        console.warn("No steps provided.");
-        return;
-    }
-    
-    // Normalize bearingAdjustments to an array
-    const adjustments = Array.isArray(bearingAdjustments) 
-        ? bearingAdjustments 
-        : new Array(allSteps.length).fill(bearingAdjustments);
-    
-    // Calculate paths with individual bearing adjustments
-    const allPaths = allSteps.map((steps, index) => {
-        const adjustment = adjustments[index] || 0;
-        const adjustedSteps = steps.map(([bearing, distance]) => {
-            const adjustedBearing = (bearing + adjustment + 360) % 360;
-            return [adjustedBearing, distance];
-        });
-        return calculatePath(startLat, startLon, adjustedSteps);
-    });
-    
-    // Flatten all points to calculate a combined bounding box
-    const allPoints = allPaths.flat();
-    
-    if (allPoints.length < 2) {
-        console.warn("Need at least two points total to draw paths.");
-        return;
-    }
-    
-    // --- 1. Determine Combined Bounding Box ---
-    const latitudes = allPoints.map(p => p.lat);
-    const longitudes = allPoints.map(p => p.lon);
-
-    const minLat = Math.min(...latitudes);
-    const maxLat = Math.max(...latitudes);
-    const minLon = Math.min(...longitudes);
-    const maxLon = Math.max(...longitudes);
-
-    const latRange = maxLat - minLat;
-    const lonRange = maxLon - minLon;
-    
-    // Use a padding factor to prevent the path from touching the edge
-    const padding = 0.1; 
-    const svgInnerWidth = svgWidth * (1 - 2 * padding);
-    const svgInnerHeight = svgHeight * (1 - 2 * padding);
-    const svgXOffset = svgWidth * padding;
-    const svgYOffset = svgHeight * padding;
-
-    // --- 2. Scaling Function (Projection) ---
-    const maxGeoRange = Math.max(latRange, lonRange) || 1; 
-    const scaleFactor = Math.min(svgInnerWidth, svgInnerHeight) / maxGeoRange;
-
-    // Convert Geo Coordinates to SVG Pixels
-    const toSVGPoint = (lat, lon) => {
-        const x = (lon - minLon) * scaleFactor + svgXOffset;
-        const y = svgHeight - ((lat - minLat) * scaleFactor + svgYOffset); 
-        return `${x.toFixed(2)},${y.toFixed(2)}`;
-    };
-
-    // --- 3. Generate SVG Markup for All Paths ---
-    let pathsMarkup = '';
-    
-    allPaths.forEach((pathPoints, index) => {
-        const pathColor = colors[index] || 'black';
-        const pointsString = pathPoints.map(p => toSVGPoint(p.lat, p.lon)).join(' ');
-        
-        // Draw the polyline
-        pathsMarkup += `
-            <polyline
-                points="${pointsString}"
-                style="fill:none; stroke:${pathColor}; stroke-width:2" />
-        `;
-        
-        // Draw circles at each vertex
-        pathPoints.forEach((p, pointIndex) => {
-            const svgCoords = toSVGPoint(p.lat, p.lon).split(',');
-            const cx = svgCoords[0];
-            const cy = svgCoords[1];
-            const radius = pointIndex === 0 ? 5 : 4; // Start point slightly larger
-            pathsMarkup += `
-            <circle class="vertex-circle" 
-                    cx="${cx}" 
-                    cy="${cy}" 
-                    r="${radius}" 
-                    fill="${pathColor}"
-                    data-lat="${p.lat.toFixed(8)}"
-                    data-lon="${p.lon.toFixed(8)}"
-                    data-path="${index + 1}"
-                    data-point="${pointIndex}" />
-            `;
-        });
-    });
-
-    // --- 4. Render to DOM ---
-    const container = document.getElementById(containerId);
-    if (container) {
-        container.innerHTML = `
-            <svg width="${svgWidth}" height="${svgHeight}" viewBox="0 0 ${svgWidth} ${svgHeight}" style="border: 1px solid #ccc;">
-                ${pathsMarkup}
-            </svg>
-        `;
-        
-        // Create tooltip element if it doesn't exist
-        let tooltip = document.getElementById('coord-tooltip');
-        if (!tooltip) {
-            tooltip = document.createElement('div');
-            tooltip.id = 'coord-tooltip';
-            tooltip.className = 'tooltip';
-            document.body.appendChild(tooltip);
-        }
-        
-        // Add event listeners to vertex circles
-        const circles = container.querySelectorAll('.vertex-circle');
-        circles.forEach(circle => {
-            circle.addEventListener('mouseenter', (e) => {
-                const lat = circle.getAttribute('data-lat');
-                const lon = circle.getAttribute('data-lon');
-                tooltip.innerHTML = `Lat: ${lat}<br>Lon: ${lon}`;
-                tooltip.style.display = 'block';
-            });
-            
-            circle.addEventListener('mousemove', (e) => {
-                tooltip.style.left = (e.pageX + 15) + 'px';
-                tooltip.style.top = (e.pageY + 15) + 'px';
-            });
-            
-            circle.addEventListener('mouseleave', () => {
-                tooltip.style.display = 'none';
-            });
-        });
-    } else {
-        console.error(`Container element with ID "${containerId}" not found.`);
-    }
-}
-
 /**
  * Calculates the area of a polygon defined by geographic coordinates.
  * Uses the Shoelace formula with geodesic correction for accurate results.
@@ -1244,135 +1108,12 @@ function plotMultiplePathsWithGeoJSON(startLat, startLon, allSteps, colors, cont
  * @param {number} svgHeight - The desired height of the SVG canvas.
  * @param {string} pathColor - The color for the path line (default: 'blue').
  */
-function plotPathInSVG(pathPoints, containerId, svgWidth, svgHeight, pathColor = 'blue') {
-    if (pathPoints.length < 2) {
-        console.warn("Need at least two points to draw a path.");
-        return;
-    }
-    
-    // --- 1. Determine Bounding Box (Min/Max Coordinates) ---
-    const latitudes = pathPoints.map(p => p.lat);
-    const longitudes = pathPoints.map(p => p.lon);
-
-    const minLat = Math.min(...latitudes);
-    const maxLat = Math.max(...latitudes);
-    const minLon = Math.min(...longitudes);
-    const maxLon = Math.max(...longitudes);
-
-    const latRange = maxLat - minLat;
-    const lonRange = maxLon - minLon;
-    
-    // Use a padding factor to prevent the path from touching the edge
-    const padding = 0.1; 
-    const svgInnerWidth = svgWidth * (1 - 2 * padding);
-    const svgInnerHeight = svgHeight * (1 - 2 * padding);
-    const svgXOffset = svgWidth * padding;
-    const svgYOffset = svgHeight * padding;
-
-
-    // --- 2. Scaling Function (Projection) ---
-    // Scale factor is based on the largest geographic range (lat or lon) 
-    // to maintain aspect ratio and prevent distortion.
-    const maxGeoRange = Math.max(latRange, lonRange) || 1; 
-    const scaleFactor = Math.min(svgInnerWidth, svgInnerHeight) / maxGeoRange;
-
-    // Convert Geo Coordinates to SVG Pixels
-    const toSVGPoint = (lat, lon) => {
-        // X: Lon translated and scaled.
-        const x = (lon - minLon) * scaleFactor + svgXOffset;
-        
-        // Y: Lat translated and scaled. Y axis is inverted in SVG (0 at top).
-        // MaxLat (North) should be at the top (low Y value).
-        const y = svgHeight - ((lat - minLat) * scaleFactor + svgYOffset); 
-        
-        return `${x.toFixed(2)},${y.toFixed(2)}`;
-    };
-
-
-    // --- 3. Generate SVG Markup ---
-    const pointsString = pathPoints.map(p => toSVGPoint(p.lat, p.lon)).join(' ');
-
-    let polylineMarkup = `
-            <polyline
-                points="${pointsString}"
-                style="fill:none; stroke:${pathColor}; stroke-width:2" />
-    `;
-    
-    // Add circles at each vertex
-    pathPoints.forEach((p, pointIndex) => {
-        const svgCoords = toSVGPoint(p.lat, p.lon).split(',');
-        const cx = svgCoords[0];
-        const cy = svgCoords[1];
-        const radius = pointIndex === 0 ? 5 : 4;
-        polylineMarkup += `
-            <circle class="vertex-circle" 
-                    cx="${cx}" 
-                    cy="${cy}" 
-                    r="${radius}" 
-                    fill="${pathColor}"
-                    data-lat="${p.lat.toFixed(8)}"
-                    data-lon="${p.lon.toFixed(8)}"
-                    data-point="${pointIndex}" />
-        `;
-    });
-
-    // --- 4. Render to DOM ---
-    const container = document.getElementById(containerId);
-    if (container) {
-        if (container.innerHTML === '') {
-            // Create initial SVG container
-            container.innerHTML = `
-                <svg width="${svgWidth}" height="${svgHeight}" viewBox="0 0 ${svgWidth} ${svgHeight}" style="border: 1px solid #ccc;">
-                    ${polylineMarkup}
-                </svg>
-            `;
-        } else {
-            // Append to existing SVG
-            const svg = container.querySelector('svg');
-            if (svg) {
-                svg.innerHTML += polylineMarkup;
-            }
-        }
-        
-        // Create tooltip element if it doesn't exist
-        let tooltip = document.getElementById('coord-tooltip');
-        if (!tooltip) {
-            tooltip = document.createElement('div');
-            tooltip.id = 'coord-tooltip';
-            tooltip.className = 'tooltip';
-            document.body.appendChild(tooltip);
-        }
-        
-        // Add event listeners to vertex circles
-        const circles = container.querySelectorAll('.vertex-circle');
-        circles.forEach(circle => {
-            circle.addEventListener('mouseenter', (e) => {
-                const lat = circle.getAttribute('data-lat');
-                const lon = circle.getAttribute('data-lon');
-                tooltip.innerHTML = `Lat: ${lat}<br>Lon: ${lon}`;
-                tooltip.style.display = 'block';
-            });
-            
-            circle.addEventListener('mousemove', (e) => {
-                tooltip.style.left = (e.pageX + 15) + 'px';
-                tooltip.style.top = (e.pageY + 15) + 'px';
-            });
-            
-            circle.addEventListener('mouseleave', () => {
-                tooltip.style.display = 'none';
-            });
-        });
-    } else {
-        console.error(`Container element with ID "${containerId}" not found.`);
-    }
-}
         // --- Example Data ---
         // Start: An arbitrary point
         let initialLat = 42.439655807;
         let initialLon = -71.155536538;
         
-        let travelSteps = [];
-        let boundsGeoJSON = null;
+        
 window.addEventListener('load', function() {
     console.log('The entire page, including all resources, has fully loaded!');
 
@@ -1428,8 +1169,6 @@ window.addEventListener('load', function() {
 
         initialLon = nextInitialLon;
         initialLat = nextInitialLat;
-        travelSteps = nextTravelSteps;
-        boundsGeoJSON = nextBoundsGeoJSON;
 
         coordinateStatus.textContent = coordinatePolygon.length
             ? `Plotted ${nextTravelSteps.length} travel steps and a polygon with ${coordinatePolygon.length} points.`
