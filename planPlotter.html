@@ -1435,12 +1435,12 @@ window.addEventListener('load', function() {
     </script>
 </head>
 <body>
-    <h1>Calculated Path Plot</h1>
+    <h1>Plan Plotter</h1>
     <section id="coordinate-polygon-controls" aria-labelledby="coordinate-polygon-heading">
-        <h2 id="coordinate-polygon-heading">Plot from Coordinates and Travel Steps</h2>
+        <h2 id="coordinate-polygon-heading">Compare Google Maps. Surveyor Plan and GNSS RTK Points</h2>
         <div class="coordinate-inputs">
             <div class="coordinate-input-group">
-                <label for="coordinate-polygon-input">Polygon coordinates (longitude, latitude per line):</label>
+                <label for="coordinate-polygon-input">Google Maps or GIS (longitude, latitude per line):</label>
                 <textarea id="coordinate-polygon-input" rows="8" placeholder="">-71.1555172, 42.4396526
                     -71.155992728, 42.440247121
                     -71.15603184,42.4403281
@@ -1455,16 +1455,16 @@ window.addEventListener('load', function() {
             <div class="coordinate-input-group">
                 <div class="initial-coordinate-inputs">
                     <div class="initial-coordinate-field">
-                        <label for="initial-longitude-input">Initial Longitude</label>
+                        <label for="initial-longitude-input">Initial Longitude from GNSS RTK:</label>
                         <input id="initial-longitude-input" type="number" step="any" value="-71.155536538">
                     </div>
                     <div class="initial-coordinate-field">
-                        <label for="initial-latitude-input">Initial Latitude</label>
+                        <label for="initial-latitude-input">Initial Latitude from GNSS RTK:</label>
                         <input id="initial-latitude-input" type="number" step="any" value="42.439655807">
                     </div>
                 </div>
-                <label for="travel-steps-input">Travel steps (bearing, distance per line):</label>
-                <textarea id="travel-steps-input" rows="8">S 20 41 10 E", 278.14
+                <label for="travel-steps-input">Surveyor Plan (Bearing in quadtrature and distance in feet per line):</label>
+                <textarea id="travel-steps-input" rows="8">S 20 41 10 E, 238.64
                     S 8 14 52 E, 39.5
                     N 81 45 8 E, 120.33
                     S 72 4 14 E, 106.47
@@ -1474,7 +1474,7 @@ window.addEventListener('load', function() {
                 </textarea>
             </div>
             <div class="coordinate-input-group">
-                <label for="bounds-geojson-input">Boundary GeoJSON:</label>
+                <label for="bounds-geojson-input">GeoJSON from GNSS RTK:</label>
                 <textarea id="bounds-geojson-input" rows="20" spellcheck="false">{
     "type": "FeatureCollection",
     "name": "Points Layer",
