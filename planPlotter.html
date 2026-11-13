@@ -809,6 +809,10 @@ function plotMultiplePathsWithGeoJSON(startLat, startLon, allSteps, colors, cont
                 vertexCircleStart: 5,
                 geojsonPoint: 6,
                 clickedMarker: 6,
+                markerLabelFont: 10,
+                markerLabelOffsetX: 10,
+                markerLabelOffsetY: 4,
+                markerLabelLineSpacing: 12,
                 polylineStroke: 2,
                 coordinatePolygonStroke: 3,
                 measureLineStroke: 3,
@@ -836,6 +840,30 @@ function plotMultiplePathsWithGeoJSON(startLat, startLon, allSteps, colors, cont
                 // Update clicked markers
                 svg.querySelectorAll('.clicked-marker').forEach(circle => {
                     circle.setAttribute('r', baseSizes.clickedMarker * scale);
+                });
+
+                svg.querySelectorAll('.marker-label').forEach(label => {
+                    const marker = svg.querySelector(
+                        `.clicked-marker[data-id="${label.dataset.markerId}"]`
+                    );
+                    if (!marker) {
+                        return;
+                    }
+
+                    const labelX = Number(marker.getAttribute('cx')) +
+                        baseSizes.markerLabelOffsetX * scale;
+                    label.setAttribute('x', labelX);
+                    label.setAttribute(
+                        'y',
+                        Number(marker.getAttribute('cy')) + baseSizes.markerLabelOffsetY * scale
+                    );
+                    label.style.fontSize = `${baseSizes.markerLabelFont * scale}px`;
+
+                    const secondLine = label.querySelector('tspan');
+                    if (secondLine) {
+                        secondLine.setAttribute('x', labelX);
+                        secondLine.setAttribute('dy', baseSizes.markerLabelLineSpacing * scale);
+                    }
                 });
                 
                 // Update polyline stroke widths
@@ -954,9 +982,15 @@ function plotMultiplePathsWithGeoJSON(startLat, startLon, allSteps, colors, cont
 
                 const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
                 label.classList.add('marker-label');
-                label.setAttribute('x', coords.x + 10);
-                label.setAttribute('y', coords.y + 4);
-                label.innerHTML = `Lat: ${geo.lat.toFixed(6)}<tspan x="${coords.x + 10}" dy="12">Lon: ${geo.lon.toFixed(6)}</tspan>`;
+                const labelX = coords.x + baseSizes.markerLabelOffsetX * currentScale;
+                label.dataset.markerId = String(markerCount);
+                label.style.fontSize = `${baseSizes.markerLabelFont * currentScale}px`;
+                label.setAttribute('x', labelX);
+                label.setAttribute(
+                    'y',
+                    coords.y + baseSizes.markerLabelOffsetY * currentScale
+                );
+                label.innerHTML = `Lat: ${geo.lat.toFixed(6)}<tspan x="${labelX}" dy="${baseSizes.markerLabelLineSpacing * currentScale}">Lon: ${geo.lon.toFixed(6)}</tspan>`;
 
                 markersGroup.appendChild(marker);
                 markersGroup.appendChild(label);
@@ -1141,7 +1175,7 @@ function plotMultiplePathsWithGeoJSON(startLat, startLon, allSteps, colors, cont
                 const distanceFeet = calculateDistanceFeet(startGeo.lat, startGeo.lon, endGeo.lat, endGeo.lon);
                 const bearing = calculateBearing(startGeo.lat, startGeo.lon, endGeo.lat, endGeo.lon);
 
-                label.textContent = `${formatDistance(distanceFeet)} @ ${bearing.toFixed(1)}°`;
+                label.textContent = `${formatDistance(distanceFeet)} @ ${bearing.toFixed(1)}\u00B0`;
                 label.style.display = 'block';
                 label.style.left = (e.pageX + 20) + 'px';
                 label.style.top = (e.pageY - 10) + 'px';
