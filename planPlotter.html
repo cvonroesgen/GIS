@@ -727,6 +727,11 @@ function plotMultiplePathsWithGeoJSON(startLat, startLon, allSteps, colors, cont
     // --- 5. Render to DOM ---
     const container = document.getElementById(containerId);
     if (container) {
+        document.querySelectorAll('.measure-label').forEach(label => {
+            if (label.dataset.containerId === containerId) {
+                label.remove();
+            }
+        });
         container.innerHTML = `
             <svg width="${svgWidth}" height="${svgHeight}" viewBox="0 0 ${svgWidth} ${svgHeight}" style="border: 1px solid #ccc;">
                 ${pathsMarkup}
@@ -842,11 +847,10 @@ function plotMultiplePathsWithGeoJSON(startLat, startLon, allSteps, colors, cont
                     polygon.style.strokeWidth = baseSizes.coordinatePolygonStroke * scale;
                 });
                 
-                // Update measure line stroke width
-                const measureLine = svg.querySelector('.measure-line');
-                if (measureLine) {
+                // Update measure line stroke widths
+                svg.querySelectorAll('.measure-line').forEach(measureLine => {
                     measureLine.style.strokeWidth = baseSizes.measureLineStroke * scale;
-                }
+                });
                 
                 // Update area label sizes
                 svg.querySelectorAll('.area-label').forEach(label => {
@@ -895,7 +899,7 @@ function plotMultiplePathsWithGeoJSON(startLat, startLon, allSteps, colors, cont
                 
                 svg.setAttribute('viewBox', `${viewBox.x} ${viewBox.y} ${viewBox.w} ${viewBox.h}`);
                 updateElementSizes();
-                positionMeasurementLabel();
+                positionMeasurementLabels();
             });
             
             // --- Helper functions for coordinate conversion ---
@@ -993,7 +997,7 @@ function plotMultiplePathsWithGeoJSON(startLat, startLon, allSteps, colors, cont
                 viewBox.y = startViewBox.y - dyViewBox;
                 
                 svg.setAttribute('viewBox', `${viewBox.x} ${viewBox.y} ${viewBox.w} ${viewBox.h}`);
-                positionMeasurementLabel();
+                positionMeasurementLabels();
             });
             
             svg.addEventListener('mouseup', (e) => {
@@ -1015,26 +1019,33 @@ function plotMultiplePathsWithGeoJSON(startLat, startLon, allSteps, colors, cont
             svg.addEventListener('dblclick', () => {
                 viewBox = { ...originalViewBox };
                 svg.setAttribute('viewBox', `${viewBox.x} ${viewBox.y} ${viewBox.w} ${viewBox.h}`);
-                positionMeasurementLabel();
+                positionMeasurementLabels();
             });
             
             // --- 7. Distance Measurement with Right-Click Drag ---
-            // Create measurement elements
-            let measureLine = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-            measureLine.classList.add('measure-line');
-            measureLine.style.display = 'none';
-            svg.insertBefore(measureLine, markersGroup);
-            
-            let measureLabel = document.getElementById('measure-label');
-            if (!measureLabel) {
-                measureLabel = document.createElement('div');
-                measureLabel.id = 'measure-label';
-                measureLabel.className = 'measure-label';
-                document.body.appendChild(measureLabel);
-            }
+            const measurements = [];
+            let activeMeasurement = null;
 
-            const positionMeasurementLabel = () => {
-                if (measureLine.style.display === 'none' || measureLabel.style.display === 'none') {
+            const createMeasurement = () => {
+                const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+                line.classList.add('measure-line');
+                line.style.display = 'block';
+                svg.insertBefore(line, markersGroup);
+
+                const label = document.createElement('div');
+                label.className = 'measure-label';
+                label.dataset.containerId = containerId;
+                label.style.display = 'none';
+                document.body.appendChild(label);
+
+                const measurement = { line, label };
+                measurements.push(measurement);
+                return measurement;
+            };
+
+            const positionMeasurementLabel = (measurement) => {
+                const { line, label } = measurement;
+                if (line.style.display === 'none' || label.style.display === 'none') {
                     return;
                 }
 
@@ -1045,17 +1056,33 @@ function plotMultiplePathsWithGeoJSON(startLat, startLon, allSteps, colors, cont
 
                 const midpoint = svg.createSVGPoint();
                 midpoint.x = (
-                    Number(measureLine.getAttribute('x1')) +
-                    Number(measureLine.getAttribute('x2'))
+                    Number(line.getAttribute('x1')) +
+                    Number(line.getAttribute('x2'))
                 ) / 2;
                 midpoint.y = (
-                    Number(measureLine.getAttribute('y1')) +
-                    Number(measureLine.getAttribute('y2'))
+                    Number(line.getAttribute('y1')) +
+                    Number(line.getAttribute('y2'))
                 ) / 2;
                 const screenPoint = midpoint.matrixTransform(matrix);
-                measureLabel.style.left = (screenPoint.x + window.scrollX + 10) + 'px';
-                measureLabel.style.top = (screenPoint.y + window.scrollY - 30) + 'px';
+                label.style.left = (screenPoint.x + window.scrollX + 10) + 'px';
+                label.style.top = (screenPoint.y + window.scrollY - 30) + 'px';
             };
+
+            const positionMeasurementLabels = () => {
+                measurements.forEach(positionMeasurementLabel);
+            };
+
+            const removeMeasurement = (measurement) => {
+                measurement.line.remove();
+                measurement.label.remove();
+                const index = measurements.indexOf(measurement);
+                if (index !== -1) {
+                    measurements.splice(index, 1);
+                }
+            };
+
+            let measureLine = null;
+            let measureLabel = null;
             
             let isMeasuring = false;
             let measureStart = { x: 0, y: 0 };
@@ -1104,19 +1131,20 @@ function plotMultiplePathsWithGeoJSON(startLat, startLon, allSteps, colors, cont
                 return `${wholeFeet}' ${inches}"`;
             };
 
-            const updateMeasurement = (coords, e) => {
-                measureLine.setAttribute('x2', coords.x);
-                measureLine.setAttribute('y2', coords.y);
+            const updateMeasurement = (measurement, coords, e) => {
+                const { line, label } = measurement;
+                line.setAttribute('x2', coords.x);
+                line.setAttribute('y2', coords.y);
 
                 const startGeo = toGeoCoords(measureStart.x, measureStart.y);
                 const endGeo = toGeoCoords(coords.x, coords.y);
                 const distanceFeet = calculateDistanceFeet(startGeo.lat, startGeo.lon, endGeo.lat, endGeo.lon);
                 const bearing = calculateBearing(startGeo.lat, startGeo.lon, endGeo.lat, endGeo.lon);
 
-                measureLabel.textContent = `${formatDistance(distanceFeet)} @ ${bearing.toFixed(1)}°`;
-                measureLabel.style.display = 'block';
-                measureLabel.style.left = (e.pageX + 20) + 'px';
-                measureLabel.style.top = (e.pageY - 10) + 'px';
+                label.textContent = `${formatDistance(distanceFeet)} @ ${bearing.toFixed(1)}°`;
+                label.style.display = 'block';
+                label.style.left = (e.pageX + 20) + 'px';
+                label.style.top = (e.pageY - 10) + 'px';
             };
             
             // Prevent context menu on right-click
@@ -1128,6 +1156,9 @@ function plotMultiplePathsWithGeoJSON(startLat, startLon, allSteps, colors, cont
                 if (e.button === 2) { // Right mouse button
                     e.preventDefault();
                     isMeasuring = true;
+                    activeMeasurement = createMeasurement();
+                    measureLine = activeMeasurement.line;
+                    measureLabel = activeMeasurement.label;
                     const coords = getSVGCoords(e);
                     measureStart = coords;
                     measureStartClient = { x: e.clientX, y: e.clientY };
@@ -1141,34 +1172,35 @@ function plotMultiplePathsWithGeoJSON(startLat, startLon, allSteps, colors, cont
             });
             
             svg.addEventListener('mousemove', (e) => {
-                if (!isMeasuring) return;
+                if (!isMeasuring || !activeMeasurement) return;
                 
-                updateMeasurement(getSVGCoords(e), e);
+                updateMeasurement(activeMeasurement, getSVGCoords(e), e);
             });
             
             const stopMeasuring = () => {
-                if (isMeasuring) {
+                if (isMeasuring && activeMeasurement) {
                     isMeasuring = false;
-                    measureLine.style.display = 'none';
-                    measureLabel.style.display = 'none';
+                    removeMeasurement(activeMeasurement);
+                    activeMeasurement = null;
                 }
             };
             
             svg.addEventListener('mouseup', (e) => {
-                if (e.button === 2 && isMeasuring) {
+                if (e.button === 2 && isMeasuring && activeMeasurement) {
                     const coords = getSVGCoords(e);
-                    updateMeasurement(coords, e);
+                    const measurement = activeMeasurement;
+                    updateMeasurement(measurement, coords, e);
                     const dragDistance = Math.hypot(
                         e.clientX - measureStartClient.x,
                         e.clientY - measureStartClient.y
                     );
                     isMeasuring = false;
+                    activeMeasurement = null;
                     if (dragDistance > dragThreshold) {
                         createUserMarker(coords);
-                        positionMeasurementLabel();
+                        positionMeasurementLabel(measurement);
                     } else {
-                        measureLine.style.display = 'none';
-                        measureLabel.style.display = 'none';
+                        removeMeasurement(measurement);
                     }
                 }
             });
