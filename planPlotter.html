@@ -589,18 +589,53 @@ function parseGeoJSONPoints(geoJSON) {
     
     if (data.type === 'FeatureCollection' && Array.isArray(data.features)) {
         data.features.forEach(feature => {
-            if (feature.type === 'Feature' && 
-                feature.geometry && 
+            if (feature?.type === 'Feature' &&
+                feature.geometry &&
                 feature.geometry.type === 'Point' &&
                 Array.isArray(feature.geometry.coordinates)) {
                 const [lon, lat, elevation] = feature.geometry.coordinates;
                 const remarks = feature.properties?.REMARKS || '';
-                points.push({ lat, lon, elevation, remarks });
+                points.push({ lat, lon, elevation, remarks: String(remarks) });
             }
         });
     }
     
     return points;
+}
+
+function parseBoundsGeoJSON(input) {
+    let data;
+    try {
+        data = JSON.parse(input);
+    } catch {
+        throw new Error('Boundary GeoJSON must be valid JSON.');
+    }
+
+    if (data?.type !== 'FeatureCollection' || !Array.isArray(data.features)) {
+        throw new Error('Boundary GeoJSON must be a FeatureCollection.');
+    }
+    if (data.features.some(feature => !feature || feature.type !== 'Feature')) {
+        throw new Error('Every boundary GeoJSON feature must be a Feature.');
+    }
+
+    const points = parseGeoJSONPoints(data);
+    if (points.length === 0) {
+        throw new Error('Boundary GeoJSON must contain at least one Point feature.');
+    }
+
+    points.forEach((point, index) => {
+        if (!Number.isFinite(point.lon) || point.lon < -180 || point.lon > 180) {
+            throw new Error(`Boundary point ${index + 1} has an invalid longitude.`);
+        }
+        if (!Number.isFinite(point.lat) || point.lat < -90 || point.lat > 90) {
+            throw new Error(`Boundary point ${index + 1} has an invalid latitude.`);
+        }
+        if (point.elevation !== undefined && !Number.isFinite(point.elevation)) {
+            throw new Error(`Boundary point ${index + 1} has an invalid elevation.`);
+        }
+    });
+
+    return data;
 }
 
 /**
@@ -1361,80 +1396,14 @@ function plotPathInSVG(pathPoints, containerId, svgWidth, svgHeight, pathColor =
         let initialLon = -71.155536538;
         
         let travelSteps = [];
-        
-        // GeoJSON data for boundary points
-        const boundsGeoJSON = {
-            "type": "FeatureCollection",
-            "name": "Points Layer",
-            "features": [
-                {
-                    "type": "Feature",
-                    "properties": {
-                        "REMARKS": ""
-                    },
-                    "geometry": {
-                        "type": "Point",
-                        "coordinates": [-71.155536538, 42.439655807, 10.641]
-                    }
-                },
-                {
-                    "type": "Feature",
-                    "properties": {
-                        "REMARKS": "Southwest corner of living room"
-                    },
-                    "geometry": {
-                        "type": "Point",
-                        "coordinates": [-71.156429428, 42.439677883, 20.731]
-                    }
-                },
-                {
-                    "type": "Feature",
-                    "properties": {
-                        "REMARKS": "Southwest corner"
-                    },
-                    "geometry": {
-                        "type": "Point",
-                        "coordinates": [-71.156517093, 42.439631067, 18.136]
-                    }
-                },
-                {
-                    "type": "Feature",
-                    "properties": {
-                        "REMARKS": "gnss fix"
-                    },
-                    "geometry": {
-                        "type": "Point",
-                        "coordinates": [-71.15651659, 42.439623797, 21.549]
-                    }
-                },
-                {
-                    "type": "Feature",
-                    "properties": {
-                        "REMARKS": "cement block South McCall"
-                    },
-                    "geometry": {
-                        "type": "Point",
-                        "coordinates": [-71.156004068, 42.439418953, 11.626]
-                    }
-                },
-                {
-                    "type": "Feature",
-                    "properties": {
-                        "REMARKS": "54 steak"
-                    },
-                    "geometry": {
-                        "type": "Point",
-                        "coordinates": [-71.156484998, 42.440174857, 22.418]
-                    }
-                }
-            ]
-        };
+        let boundsGeoJSON = null;
 window.addEventListener('load', function() {
     console.log('The entire page, including all resources, has fully loaded!');
 
     const bearingAdjustment = -14.05;
     const coordinateInput = document.getElementById('coordinate-polygon-input');
     const travelStepsInput = document.getElementById('travel-steps-input');
+    const boundsGeoJSONInput = document.getElementById('bounds-geojson-input');
     const initialLongitudeInput = document.getElementById('initial-longitude-input');
     const initialLatitudeInput = document.getElementById('initial-latitude-input');
     const coordinateStatus = document.getElementById('coordinate-polygon-status');
@@ -1444,6 +1413,7 @@ window.addEventListener('load', function() {
         let nextInitialLat;
         let nextTravelSteps;
         let coordinatePolygon;
+        let nextBoundsGeoJSON;
         try {
             if (!initialLongitudeInput.value.trim() || !initialLatitudeInput.value.trim()) {
                 throw new Error('Enter both an initial longitude and latitude.');
@@ -1460,6 +1430,7 @@ window.addEventListener('load', function() {
             coordinatePolygon = coordinateInput.value.trim()
                 ? parseCoordinateRows(coordinateInput.value)
                 : [];
+            nextBoundsGeoJSON = parseBoundsGeoJSON(boundsGeoJSONInput.value);
         } catch (error) {
             coordinateStatus.textContent = error.message;
             coordinateStatus.dataset.error = 'true';
@@ -1478,12 +1449,13 @@ window.addEventListener('load', function() {
 
         plotMultiplePathsWithGeoJSON(
             nextInitialLat, nextInitialLon, [adjustedTravelSteps], ['blue', 'red'],
-            "svg-container", 3000, 2000, [0, 0], boundsGeoJSON, 'green', coordinatePolygon
+            "svg-container", 3000, 2000, [0, 0], nextBoundsGeoJSON, 'green', coordinatePolygon
         );
 
         initialLon = nextInitialLon;
         initialLat = nextInitialLat;
         travelSteps = nextTravelSteps;
+        boundsGeoJSON = nextBoundsGeoJSON;
 
         const csvDisplay = document.getElementById('csv-content');
         if (csvDisplay) {
@@ -1564,6 +1536,75 @@ window.addEventListener('load', function() {
                     S 23 12 2 E, -104.31
                     S 45 37 11 E, -165.42
                 </textarea>
+            </div>
+            <div class="coordinate-input-group">
+                <label for="bounds-geojson-input">Boundary GeoJSON:</label>
+                <textarea id="bounds-geojson-input" rows="20" spellcheck="false">{
+    "type": "FeatureCollection",
+    "name": "Points Layer",
+    "features": [
+        {
+            "type": "Feature",
+            "properties": {
+                "REMARKS": ""
+            },
+            "geometry": {
+                "type": "Point",
+                "coordinates": [-71.155536538, 42.439655807, 10.641]
+            }
+        },
+        {
+            "type": "Feature",
+            "properties": {
+                "REMARKS": "Southwest corner of living room"
+            },
+            "geometry": {
+                "type": "Point",
+                "coordinates": [-71.156429428, 42.439677883, 20.731]
+            }
+        },
+        {
+            "type": "Feature",
+            "properties": {
+                "REMARKS": "Southwest corner"
+            },
+            "geometry": {
+                "type": "Point",
+                "coordinates": [-71.156517093, 42.439631067, 18.136]
+            }
+        },
+        {
+            "type": "Feature",
+            "properties": {
+                "REMARKS": "gnss fix"
+            },
+            "geometry": {
+                "type": "Point",
+                "coordinates": [-71.15651659, 42.439623797, 21.549]
+            }
+        },
+        {
+            "type": "Feature",
+            "properties": {
+                "REMARKS": "cement block South McCall"
+            },
+            "geometry": {
+                "type": "Point",
+                "coordinates": [-71.156004068, 42.439418953, 11.626]
+            }
+        },
+        {
+            "type": "Feature",
+            "properties": {
+                "REMARKS": "54 steak"
+            },
+            "geometry": {
+                "type": "Point",
+                "coordinates": [-71.156484998, 42.440174857, 22.418]
+            }
+        }
+    ]
+}</textarea>
             </div>
         </div>
         <button id="plot-coordinate-polygon" type="button">Refresh</button>
