@@ -1404,7 +1404,7 @@ window.addEventListener('load', function() {
         coordinateStatus.dataset.error = 'false';
     };
 
-    document.getElementById('download-lat-lon-alt-geojson').addEventListener('click', () => {
+    document.getElementById('download-geojson').addEventListener('click', () => {
         try {
             const selectedKey = savedSettingsKeySelect.value;
             if (!selectedKey) {
@@ -1458,7 +1458,7 @@ window.addEventListener('load', function() {
             );
             const link = document.createElement('a');
             link.href = url;
-            const fileName = `${selectedKey}-Lat-Lon-Alt.geojson`;
+            const fileName = `${selectedKey}.geojson`;
             link.download = fileName;
             document.body.appendChild(link);
             link.click();
@@ -1613,7 +1613,7 @@ window.addEventListener('load', function() {
                     S 23 12 2 E, -104.31
                     S 45 37 11 E, -165.42
                 </textarea>
-                <button id="download-lat-lon-alt-geojson" type="button">Download Lat-Lon-Alt GeoJSON</button>
+                <button id="download-geojson" type="button">Download GeoJSON</button>
             </div>
             <div class="coordinate-input-group">
                 <label for="bounds-geojson-input">GeoJSON from GNSS RTK:</label>
