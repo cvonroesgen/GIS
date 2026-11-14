@@ -1404,11 +1404,11 @@ window.addEventListener('load', function() {
         coordinateStatus.dataset.error = 'false';
     };
 
-    document.getElementById('download-lat-lon-alt-csv').addEventListener('click', () => {
+    document.getElementById('download-lat-lon-alt-geojson').addEventListener('click', () => {
         try {
             const selectedKey = savedSettingsKeySelect.value;
             if (!selectedKey) {
-                throw new Error('Select a saved settings key before downloading the CSV.');
+                throw new Error('Select a saved settings key before downloading the GeoJSON.');
             }
             if (!initialLatitudeInput.value.trim() || !initialLongitudeInput.value.trim()) {
                 throw new Error('Enter both an initial longitude and latitude.');
@@ -1440,16 +1440,25 @@ window.addEventListener('load', function() {
                 }
             );
             const points = calculatePath(initialLatitude, initialLongitude, adjustedTravelSteps);
-            const rows = [
-                'Lat,Lon,Alt',
-                `${initialLatitudeInput.value},${initialLongitudeInput.value},0`,
-                ...points.slice(1).map(point => `${point.lat.toFixed(8)},${point.lon.toFixed(8)},0`)
-            ];
-            const csv = `${rows.join('\r\n')}\r\n`;
-            const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+            const geoJSON = {
+                type: 'FeatureCollection',
+                name: 'Points Layer',
+                features: points.map(point => ({
+                    type: 'Feature',
+                    properties: { REMARKS: '' },
+                    geometry: {
+                        type: 'Point',
+                        coordinates: [point.lon, point.lat, 0]
+                    }
+                }))
+            };
+            const geoJSONText = `${JSON.stringify(geoJSON, null, 4)}\r\n`;
+            const url = URL.createObjectURL(
+                new Blob([geoJSONText], { type: 'application/geo+json;charset=utf-8' })
+            );
             const link = document.createElement('a');
             link.href = url;
-            const fileName = `${selectedKey}-Lat-Lon-Alt.csv`;
+            const fileName = `${selectedKey}-Lat-Lon-Alt.geojson`;
             link.download = fileName;
             document.body.appendChild(link);
             link.click();
@@ -1457,7 +1466,7 @@ window.addEventListener('load', function() {
             window.setTimeout(() => URL.revokeObjectURL(url), 1000);
             setStatus(`Downloaded ${points.length} coordinates as ${fileName}.`);
         } catch (error) {
-            setStatus(`Unable to download CSV: ${error.message}`, true);
+            setStatus(`Unable to download GeoJSON: ${error.message}`, true);
         }
     });
 
@@ -1604,7 +1613,7 @@ window.addEventListener('load', function() {
                     S 23 12 2 E, -104.31
                     S 45 37 11 E, -165.42
                 </textarea>
-                <button id="download-lat-lon-alt-csv" type="button">Download Lat-Lon-Alt CSV</button>
+                <button id="download-lat-lon-alt-geojson" type="button">Download Lat-Lon-Alt GeoJSON</button>
             </div>
             <div class="coordinate-input-group">
                 <label for="bounds-geojson-input">GeoJSON from GNSS RTK:</label>
