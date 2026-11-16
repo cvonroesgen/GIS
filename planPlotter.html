@@ -239,7 +239,7 @@ function parseTravelSteps(input) {
         }
 
         const parsed = line.trim().match(
-            /^([NS]\s*\d+(?:\s+|:)\d+(?:\s+|:)\d+\s*[EW])"?\s*,\s*([+-]?(?:\d+(?:\.\d*)?|\.\d+))$/i
+            /^([NS]\s*\d+(?:\s+|:)\d+(?:\s+|:)\d+\s*[EW])"?\s*,\s*([+-]?(?:\d+(?:\.\d*)?|\.\d+))(?:\s*,\s*(.*))?$/i
         );
         if (!parsed || !decimalPattern.test(parsed[2])) {
             throw new Error(`Line ${index + 1} must contain a bearing and distance, separated by a comma.`);
@@ -250,7 +250,7 @@ function parseTravelSteps(input) {
             throw new Error(`Line ${index + 1} has an invalid quadrant bearing.`);
         }
 
-        steps.push([bearingText, Number(parsed[2])]);
+        steps.push([bearingText, Number(parsed[2]), (parsed[3] ?? '').trim()]);
     });
 
     if (steps.length === 0) {
@@ -1429,23 +1429,26 @@ window.addEventListener('load', function() {
                 throw new Error('Surveyor North to True North Offset must be a number.');
             }
 
-            const adjustedTravelSteps = parseTravelSteps(travelStepsInput.value).map(
-                ([bearingText, distance]) => {
+            const parsedTravelSteps = parseTravelSteps(travelStepsInput.value);
+            const adjustedTravelSteps = parsedTravelSteps.map(
+                ([bearingText, distance, remark]) => {
                     const bearing = QuadratureToBearing(bearingText);
                     if (bearing === null) {
                         throw new Error('A travel step has an invalid quadrant bearing.');
                     }
                     const bearingWithOffset = (bearing + bearingAdjustmentValue) % 360;
-                    return [(bearingWithOffset + 360) % 360, distance];
+                    return [(bearingWithOffset + 360) % 360, distance, remark];
                 }
             );
             const points = calculatePath(initialLatitude, initialLongitude, adjustedTravelSteps);
             const geoJSON = {
                 type: 'FeatureCollection',
                 name: 'Points Layer',
-                features: points.map(point => ({
+                features: points.map((point, index) => ({
                     type: 'Feature',
-                    properties: { REMARKS: '' },
+                    properties: {
+                        REMARKS: adjustedTravelSteps[index]?.[2] ?? ''
+                    },
                     geometry: {
                         type: 'Point',
                         coordinates: [point.lon, point.lat, 0]
