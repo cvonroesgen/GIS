@@ -231,26 +231,63 @@ function QuadratureToBearing(quad) {
 
 function parseTravelSteps(input) {
     const steps = [];
-    const decimalPattern = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/;
 
     input.split(/\r?\n/).forEach((line, index) => {
         if (!line.trim()) {
             return;
         }
 
-        const parsed = line.trim().match(
+        const lineText = line.trim();
+        const bearingMatch = lineText.match(
             /^([NS]\s*\d+(?:\s+|:)\d+(?:\s+|:)\d+\s*[EW])"?\s*,\s*([+-]?(?:\d+(?:\.\d*)?|\.\d+))(?:\s*,\s*(.*))?$/i
         );
-        if (!parsed || !decimalPattern.test(parsed[2])) {
-            throw new Error(`Line ${index + 1} must contain a bearing and distance, separated by a comma.`);
+        if (bearingMatch) {
+            const bearingText = bearingMatch[1].trim().replace(/\s+/g, ' ');
+            if (QuadratureToBearing(bearingText) === null) {
+                throw new Error(`Line ${index + 1} has an invalid quadrant bearing.`);
+            }
+            const distance = Number(bearingMatch[2]);
+            if (!Number.isFinite(distance)) {
+                throw new Error(`Line ${index + 1} must have a finite distance.`);
+            }
+
+            steps.push({
+                type: 'bearing',
+                bearingText,
+                distance,
+                remark: (bearingMatch[3] ?? '').trim()
+            });
+            return;
         }
 
-        const bearingText = parsed[1].trim().replace(/\s+/g, ' ');
-        if (QuadratureToBearing(bearingText) === null) {
-            throw new Error(`Line ${index + 1} has an invalid quadrant bearing.`);
+        const arcMatch = lineText.match(
+            /^([+-]?(?:\d+(?:\.\d*)?|\.\d+))\s*,\s*([+-]?(?:\d+(?:\.\d*)?|\.\d+))(?:\s*,\s*|\s+)(CW|CCW)(?:\s*,\s*(.*))?$/i
+        );
+        if (!arcMatch) {
+            throw new Error(
+                `Line ${index + 1} must contain a bearing and distance, or a radius, arc distance, and direction.`
+            );
         }
 
-        steps.push([bearingText, Number(parsed[2]), (parsed[3] ?? '').trim()]);
+        const radius = Number(arcMatch[1]);
+        const distance = Number(arcMatch[2]);
+        if (!Number.isFinite(radius) || radius <= 0) {
+            throw new Error(`Line ${index + 1} must have a radius greater than zero.`);
+        }
+        if (!Number.isFinite(distance) || distance < 0) {
+            throw new Error(`Line ${index + 1} must have a nonnegative arc distance.`);
+        }
+        if (steps.length === 0) {
+            throw new Error(`Line ${index + 1} is a circular path and requires a preceding bearing row.`);
+        }
+
+        steps.push({
+            type: 'arc',
+            radius,
+            distance,
+            direction: arcMatch[3].toUpperCase(),
+            remark: (arcMatch[4] ?? '').trim()
+        });
     });
 
     if (steps.length === 0) {
@@ -258,6 +295,61 @@ function parseTravelSteps(input) {
     }
 
     return steps;
+}
+
+function expandTravelSteps(travelSteps, bearingAdjustment) {
+    const expandedSteps = [];
+    const rowStartIndexes = [];
+    let tangentBearing = null;
+    const normalizeBearing = bearing => ((bearing % 360) + 360) % 360;
+
+    travelSteps.forEach((step, index) => {
+        rowStartIndexes.push(expandedSteps.length);
+
+        if (step.type === 'bearing') {
+            const bearing = QuadratureToBearing(step.bearingText);
+            if (bearing === null) {
+                throw new Error(`Travel step ${index + 1} has an invalid quadrant bearing.`);
+            }
+
+            const bearingWithOffset = (bearing + bearingAdjustment) % 360;
+            const adjustedBearing = normalizeBearing(bearingWithOffset);
+            expandedSteps.push([adjustedBearing, step.distance]);
+            tangentBearing = normalizeBearing(
+                adjustedBearing + 180 + (step.distance < 0 ? 180 : 0)
+            );
+            return;
+        }
+
+        if (tangentBearing === null) {
+            throw new Error(`Circular path ${index + 1} requires a preceding bearing row.`);
+        }
+
+        const turnDirection = step.direction === 'CW' ? 1 : -1;
+        const sweepDegrees = turnDirection * step.distance / step.radius * (180 / Math.PI);
+        const segmentCount = Math.max(
+            1,
+            Math.ceil(step.distance / 25),
+            Math.ceil(Math.abs(sweepDegrees) / 5)
+        );
+        if (!Number.isFinite(segmentCount) || segmentCount > 10000) {
+            throw new Error(`Circular path ${index + 1} requires too many points to plot.`);
+        }
+
+        const segmentSweep = sweepDegrees / segmentCount;
+        const chordDistance = 2 * step.radius * Math.sin(
+            Math.abs(segmentSweep) * Math.PI / 360
+        );
+        for (let segmentIndex = 0; segmentIndex < segmentCount; segmentIndex++) {
+            const midpointBearing = normalizeBearing(
+                tangentBearing + segmentSweep * (segmentIndex + 0.5)
+            );
+            expandedSteps.push([normalizeBearing(midpointBearing - 180), chordDistance]);
+        }
+        tangentBearing = normalizeBearing(tangentBearing + sweepDegrees);
+    });
+
+    return { steps: expandedSteps, rowStartIndexes };
 }
 
 /**
@@ -1280,7 +1372,6 @@ window.addEventListener('load', function() {
     const newSettingsKeyInput = document.getElementById('new-settings-key');
     const existingSettingsKeySelect = document.getElementById('existing-settings-key');
     const saveDialogStatus = document.getElementById('save-dialog-status');
-    let bearingAdjustment;
 
     const setStatus = (message, isError = false) => {
         coordinateStatus.textContent = message;
@@ -1349,6 +1440,7 @@ window.addEventListener('load', function() {
         let nextInitialLon;
         let nextInitialLat;
         let nextTravelSteps;
+        let adjustedTravelSteps;
         let coordinatePolygon;
         let nextBoundsGeoJSON;
         try {
@@ -1371,6 +1463,10 @@ window.addEventListener('load', function() {
                 throw new Error('Initial Latitude must be between -90 and 90.');
             }
             nextTravelSteps = parseTravelSteps(travelStepsInput.value);
+            adjustedTravelSteps = expandTravelSteps(
+                nextTravelSteps,
+                nextBearingAdjustment
+            ).steps;
             coordinatePolygon = coordinateInput.value.trim()
                 ? parseCoordinateRows(coordinateInput.value)
                 : [];
@@ -1381,15 +1477,6 @@ window.addEventListener('load', function() {
             return;
         }
 
-        bearingAdjustment = nextBearingAdjustment;
-        const nextTravelStepsInDegrees = nextTravelSteps.map(([bearingText, distance]) => [
-            QuadratureToBearing(bearingText),
-            distance
-        ]);
-        const adjustedTravelSteps = nextTravelStepsInDegrees.map(([bearing, distance]) => [
-            (bearing + bearingAdjustment) % 360,
-            distance
-        ]);
         plotMultiplePathsWithGeoJSON(
             nextInitialLat, nextInitialLon, [adjustedTravelSteps], ['red'],
             "svg-container", 3000, 2000, [0, 0], nextBoundsGeoJSON, 'green', coordinatePolygon
@@ -1430,24 +1517,28 @@ window.addEventListener('load', function() {
             }
 
             const parsedTravelSteps = parseTravelSteps(travelStepsInput.value);
-            const adjustedTravelSteps = parsedTravelSteps.map(
-                ([bearingText, distance, remark]) => {
-                    const bearing = QuadratureToBearing(bearingText);
-                    if (bearing === null) {
-                        throw new Error('A travel step has an invalid quadrant bearing.');
-                    }
-                    const bearingWithOffset = (bearing + bearingAdjustmentValue) % 360;
-                    return [(bearingWithOffset + 360) % 360, distance, remark];
-                }
+            const {
+                steps: adjustedTravelSteps,
+                rowStartIndexes
+            } = expandTravelSteps(parsedTravelSteps, bearingAdjustmentValue);
+            const points = calculatePath(
+                initialLatitude,
+                initialLongitude,
+                adjustedTravelSteps
             );
-            const points = calculatePath(initialLatitude, initialLongitude, adjustedTravelSteps);
+            const remarksByPointIndex = new Map(
+                parsedTravelSteps.map((step, index) => [
+                    rowStartIndexes[index],
+                    step.remark
+                ])
+            );
             const geoJSON = {
                 type: 'FeatureCollection',
                 name: 'Points Layer',
                 features: points.map((point, index) => ({
                     type: 'Feature',
                     properties: {
-                        REMARKS: adjustedTravelSteps[index]?.[2] ?? ''
+                        REMARKS: remarksByPointIndex.get(index) ?? ''
                     },
                     geometry: {
                         type: 'Point',
@@ -1607,8 +1698,8 @@ window.addEventListener('load', function() {
                     <label for="bearing-adjustment-input">Surveyor North to True North Offset</label>
                     <input id="bearing-adjustment-input" type="number" step="any" value="-14.05">
                 </div>
-                <label for="travel-steps-input">Surveyor Plan (Bearing in quadtrature and distance in feet per line):</label>
-                <textarea id="travel-steps-input" rows="8">S 20 41 10 E, 238.64
+                <label for="travel-steps-input">Surveyor Plan (bearing/distance or circular path per line):</label>
+                <textarea id="travel-steps-input" rows="8" aria-describedby="travel-steps-format">S 20 41 10 E, 238.64
                     S 8 14 52 E, 39.5
                     N 81 45 8 E, 120.33
                     S 72 4 14 E, 106.47
@@ -1616,6 +1707,11 @@ window.addEventListener('load', function() {
                     S 23 12 2 E, -104.31
                     S 45 37 11 E, -165.42
                 </textarea>
+                <p id="travel-steps-format">
+                    Bearing row: bearing, distance, optional remark. Arc row: radius, arc distance,
+                    CW/CCW, optional remark. Arc distance is measured along the curve; an arc follows
+                    the preceding segment's direction and must follow a bearing row.
+                </p>
                 <button id="download-geojson" type="button">Download GeoJSON</button>
             </div>
             <div class="coordinate-input-group">
