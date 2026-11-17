@@ -274,18 +274,34 @@ function parseTravelSteps(input) {
         if (!Number.isFinite(radius) || radius <= 0) {
             throw new Error(`Line ${index + 1} must have a radius greater than zero.`);
         }
-        if (!Number.isFinite(distance) || distance < 0) {
-            throw new Error(`Line ${index + 1} must have a nonnegative arc distance.`);
+        if (!Number.isFinite(distance)) {
+            throw new Error(`Line ${index + 1} must have a finite arc distance.`);
         }
         if (steps.length === 0) {
             throw new Error(`Line ${index + 1} is a circular path and requires a preceding bearing row.`);
+        }
+
+        const direction = arcMatch[3].toUpperCase();
+        if (distance < 0) {
+            const previousStep = steps[steps.length - 1];
+            if (previousStep.type !== 'arc' || previousStep.distance <= 0 ||
+                previousStep.radius !== radius) {
+                throw new Error(
+                    `Line ${index + 1} can use a negative arc distance only after a positive arc with the same radius.`
+                );
+            }
+            if (previousStep.direction !== direction) {
+                throw new Error(
+                    `Line ${index + 1} must use the preceding arc's direction to retrace it.`
+                );
+            }
         }
 
         steps.push({
             type: 'arc',
             radius,
             distance,
-            direction: arcMatch[3].toUpperCase(),
+            direction,
             remark: (arcMatch[4] ?? '').trim()
         });
     });
@@ -297,14 +313,45 @@ function parseTravelSteps(input) {
     return steps;
 }
 
-function expandTravelSteps(travelSteps, bearingAdjustment) {
-    const expandedSteps = [];
-    const rowStartIndexes = [];
-    let tangentBearing = null;
+function calculateDestinationPoint(startLat, startLon, bearingDegrees, distanceFeet) {
+    const EARTH_RADIUS_MILES = 3958.8;
+    const FEET_PER_MILE = 5280;
+    const toRad = deg => deg * (Math.PI / 180);
+    const toDeg = rad => rad * (180 / Math.PI);
+    const angularDistance = distanceFeet / FEET_PER_MILE / EARTH_RADIUS_MILES;
+    const latRad = toRad(startLat);
+    const lonRad = toRad(startLon);
+    const bearingRad = toRad(bearingDegrees);
+
+    const destinationLatRad = Math.asin(
+        Math.sin(latRad) * Math.cos(angularDistance) +
+        Math.cos(latRad) * Math.sin(angularDistance) * Math.cos(bearingRad)
+    );
+    const destinationLonRad = lonRad + Math.atan2(
+        Math.sin(bearingRad) * Math.sin(angularDistance) * Math.cos(latRad),
+        Math.cos(angularDistance) - Math.sin(latRad) * Math.sin(destinationLatRad)
+    );
+
+    return {
+        lat: toDeg(destinationLatRad),
+        lon: toDeg(destinationLonRad)
+    };
+}
+
+function calculateTravelRoute(startLat, startLon, travelSteps, bearingAdjustment) {
+    const route = {
+        points: [{ lat: startLat, lon: startLon }],
+        segments: [],
+        boundsPoints: [{ lat: startLat, lon: startLon }],
+        areaPoints: [{ lat: startLat, lon: startLon }],
+        rowStartIndexes: []
+    };
     const normalizeBearing = bearing => ((bearing % 360) + 360) % 360;
+    let tangentBearing = null;
 
     travelSteps.forEach((step, index) => {
-        rowStartIndexes.push(expandedSteps.length);
+        route.rowStartIndexes.push(route.points.length - 1);
+        const start = route.points[route.points.length - 1];
 
         if (step.type === 'bearing') {
             const bearing = QuadratureToBearing(step.bearingText);
@@ -312,11 +359,14 @@ function expandTravelSteps(travelSteps, bearingAdjustment) {
                 throw new Error(`Travel step ${index + 1} has an invalid quadrant bearing.`);
             }
 
-            const bearingWithOffset = (bearing + bearingAdjustment) % 360;
-            const adjustedBearing = normalizeBearing(bearingWithOffset);
-            expandedSteps.push([adjustedBearing, step.distance]);
+            const actualBearing = normalizeBearing(bearing + bearingAdjustment + 180);
+            const end = calculateDestinationPoint(start.lat, start.lon, actualBearing, step.distance);
+            route.segments.push({ type: 'line', start, end });
+            route.points.push(end);
+            route.boundsPoints.push(end);
+            route.areaPoints.push(end);
             tangentBearing = normalizeBearing(
-                adjustedBearing + 180 + (step.distance < 0 ? 180 : 0)
+                actualBearing + (step.distance < 0 ? 180 : 0)
             );
             return;
         }
@@ -324,92 +374,104 @@ function expandTravelSteps(travelSteps, bearingAdjustment) {
         if (tangentBearing === null) {
             throw new Error(`Circular path ${index + 1} requires a preceding bearing row.`);
         }
+        if (step.distance === 0) {
+            const end = { ...start };
+            route.segments.push({ type: 'line', start, end });
+            route.points.push(end);
+            route.boundsPoints.push(end);
+            route.areaPoints.push(end);
+            return;
+        }
 
         const turnDirection = step.direction === 'CW' ? 1 : -1;
         const sweepDegrees = turnDirection * step.distance / step.radius * (180 / Math.PI);
-        const segmentCount = Math.max(
-            1,
-            Math.ceil(step.distance / 25),
-            Math.ceil(Math.abs(sweepDegrees) / 5)
-        );
-        if (!Number.isFinite(segmentCount) || segmentCount > 10000) {
-            throw new Error(`Circular path ${index + 1} requires too many points to plot.`);
+        const arcCommandCount = Math.max(1, Math.ceil(Math.abs(sweepDegrees) / 180));
+        if (!Number.isFinite(arcCommandCount) || arcCommandCount > 10000) {
+            throw new Error(`Circular path ${index + 1} requires too many SVG arc segments to plot.`);
         }
 
-        const segmentSweep = sweepDegrees / segmentCount;
-        const chordDistance = 2 * step.radius * Math.sin(
-            Math.abs(segmentSweep) * Math.PI / 360
+        const arcStartTangent = normalizeBearing(
+            tangentBearing + (step.distance < 0 ? 180 : 0)
         );
-        for (let segmentIndex = 0; segmentIndex < segmentCount; segmentIndex++) {
-            const midpointBearing = normalizeBearing(
-                tangentBearing + segmentSweep * (segmentIndex + 0.5)
+        let center;
+        let startRadialBearing;
+        const previousSegment = route.segments[route.segments.length - 1];
+        if (step.distance < 0) {
+            if (previousSegment?.type !== 'arc' || previousSegment.radius !== step.radius) {
+                throw new Error(`Circular path ${index + 1} cannot retrace the preceding arc.`);
+            }
+            center = previousSegment.center;
+            startRadialBearing = normalizeBearing(
+                previousSegment.startRadialBearing + previousSegment.sweepDegrees
             );
-            expandedSteps.push([normalizeBearing(midpointBearing - 180), chordDistance]);
+        } else {
+            const centerBearing = normalizeBearing(
+                arcStartTangent + Math.sign(sweepDegrees) * 90
+            );
+            center = calculateDestinationPoint(start.lat, start.lon, centerBearing, step.radius);
+            startRadialBearing = normalizeBearing(centerBearing + 180);
         }
-        tangentBearing = normalizeBearing(tangentBearing + sweepDegrees);
+
+        const end = calculateDestinationPoint(
+            center.lat,
+            center.lon,
+            normalizeBearing(startRadialBearing + sweepDegrees),
+            step.radius
+        );
+        const segment = {
+            type: 'arc',
+            start,
+            end,
+            center,
+            radius: step.radius,
+            startRadialBearing,
+            sweepDegrees
+        };
+        route.segments.push(segment);
+        route.points.push(end);
+        route.boundsPoints.push(end);
+
+        const areaSampleCount = Math.min(
+            10000,
+            Math.max(
+                1,
+                Math.ceil(Math.abs(step.distance) / 25),
+                Math.ceil(Math.abs(sweepDegrees) / 5)
+            )
+        );
+        for (let sampleIndex = 1; sampleIndex <= areaSampleCount; sampleIndex++) {
+            if (sampleIndex === areaSampleCount) {
+                route.areaPoints.push(end);
+                continue;
+            }
+
+            const radialBearing = normalizeBearing(
+                startRadialBearing + sweepDegrees * sampleIndex / areaSampleCount
+            );
+            route.areaPoints.push(
+                calculateDestinationPoint(center.lat, center.lon, radialBearing, step.radius)
+            );
+        }
+
+        const sweepMagnitude = Math.abs(sweepDegrees);
+        [0, 90, 180, 270].forEach(cardinalBearing => {
+            const delta = sweepDegrees >= 0
+                ? normalizeBearing(cardinalBearing - startRadialBearing)
+                : -normalizeBearing(startRadialBearing - cardinalBearing);
+            if (sweepMagnitude >= 360 || (sweepDegrees >= 0
+                ? delta <= sweepDegrees + 1e-10
+                : delta >= sweepDegrees - 1e-10)) {
+                route.boundsPoints.push(
+                    calculateDestinationPoint(center.lat, center.lon, cardinalBearing, step.radius)
+                );
+            }
+        });
+
+        tangentBearing = normalizeBearing(arcStartTangent + sweepDegrees);
     });
 
-    return { steps: expandedSteps, rowStartIndexes };
+    return route;
 }
-
-/**
- * Calculates a series of destination points from a starting point
- * based on an array of [distanceFeet, bearingDegrees] steps.
- *
- * @param {number} startLat - Initial latitude in degrees.
- * @param {number} startLon - Initial longitude in degrees.
- * @param {Array<Array<number>>} steps - Array of [distanceFeet, bearingDegrees] pairs.
- * @returns {Array<{lat: number, lon: number}>} - Array of all path points (including start).
- */
-function calculatePath(startLat, startLon, steps) {
-    const EARTH_RADIUS_MILES = 3958.8;
-    const FEET_PER_MILE = 5280;
-    const points = [{ lat: startLat, lon: startLon }];
-    let currentLat = startLat;
-    let currentLon = startLon;
-
-    const toRad = deg => deg * (Math.PI / 180);
-    const toDeg = rad => rad * (180 / Math.PI);
-
-    for (const [bearingDegrees, distanceFeet] of steps) {
-        const R = EARTH_RADIUS_MILES;
-        const d = distanceFeet / FEET_PER_MILE;
-
-        const latRad = toRad(currentLat);
-        const lonRad = toRad(currentLon);
-        const brngRad = toRad((bearingDegrees + 180) % 360);
-        const angularDistance = d / R;
-
-        const destLatRad = Math.asin(
-            Math.sin(latRad) * Math.cos(angularDistance) +
-            Math.cos(latRad) * Math.sin(angularDistance) * Math.cos(brngRad)
-        );
-
-        const destLonRad = lonRad + Math.atan2(
-            Math.sin(brngRad) * Math.sin(angularDistance) * Math.cos(latRad),
-            Math.cos(angularDistance) - Math.sin(latRad) * Math.sin(destLatRad)
-        );
-
-        currentLat = toDeg(destLatRad);
-        currentLon = toDeg(destLonRad);
-
-        points.push({ lat: currentLat, lon: currentLon });
-    }
-
-    return points;
-}
-/**
- * Renders multiple geographic paths as SVG polylines on the same coordinate system.
- *
- * @param {number} startLat - Initial latitude in degrees.
- * @param {number} startLon - Initial longitude in degrees.
- * @param {Array<Array<Array<number>>>} allSteps - Array of step arrays for each path.
- * @param {Array<string>} colors - Array of colors for each path.
- * @param {string} containerId - The ID of the HTML element where the SVG will be placed.
- * @param {number} svgWidth - The desired width of the SVG canvas.
- * @param {number} svgHeight - The desired height of the SVG canvas.
- * @param {Array<number>|number} bearingAdjustments - Array of degrees to add to bearings for each path, or single value for all paths (default: 0).
- */
 /**
  * Calculates the area of a polygon defined by geographic coordinates.
  * Uses the Shoelace formula with geodesic correction for accurate results.
@@ -614,40 +676,20 @@ function parseBoundsGeoJSON(input) {
 }
 
 /**
- * Renders multiple geographic paths and GeoJSON points on the same SVG.
+ * Renders calculated routes and GeoJSON points on the same SVG.
  *
- * @param {number} startLat - Initial latitude in degrees.
- * @param {number} startLon - Initial longitude in degrees.
- * @param {Array<Array<Array<number>>>} allSteps - Array of step arrays for each path.
+ * @param {Array<Object>} allRoutes - Calculated routes made of line and arc segments.
  * @param {Array<string>} colors - Array of colors for each path.
- * @param {string} containerId - The ID of the HTML element where the SVG will be placed.
- * @param {number} svgWidth - The desired width of the SVG canvas.
- * @param {number} svgHeight - The desired height of the SVG canvas.
- * @param {Array<number>|number} bearingAdjustments - Bearing adjustments for paths.
- * @param {string|Object} geoJSON - Optional GeoJSON data to plot.
- * @param {string} geoJSONColor - Color for GeoJSON points (default: 'green').
+ * @param {string} containerId - ID of the element where the SVG will be placed.
+ * @param {number} svgWidth - Width of the SVG canvas.
+ * @param {number} svgHeight - Height of the SVG canvas.
  */
-function plotMultiplePathsWithGeoJSON(startLat, startLon, allSteps, colors, containerId, svgWidth, svgHeight, bearingAdjustments = 0, geoJSON = null, geoJSONColor = 'green', coordinatePolygon = []) {
-    // Normalize bearingAdjustments to an array
-    const adjustments = Array.isArray(bearingAdjustments) 
-        ? bearingAdjustments 
-        : new Array(allSteps.length).fill(bearingAdjustments);
-    
-    // Calculate paths with individual bearing adjustments
-    const allPaths = allSteps.map((steps, index) => {
-        const adjustment = adjustments[index] || 0;
-        const adjustedSteps = steps.map(([bearing, distance]) => {
-            const adjustedBearing = (bearing + adjustment + 360) % 360;
-            return [adjustedBearing, distance];
-        });
-        return calculatePath(startLat, startLon, adjustedSteps);
-    });
-    
+function plotMultiplePathsWithGeoJSON(allRoutes, colors, containerId, svgWidth, svgHeight, geoJSON = null, geoJSONColor = 'green', coordinatePolygon = []) {
     // Parse GeoJSON points if provided
     const geoJSONPoints = geoJSON ? parseGeoJSONPoints(geoJSON) : [];
     
     // Flatten all points to calculate a combined bounding box
-    const allPathPoints = allPaths.flat();
+    const allPathPoints = allRoutes.flatMap(route => route.boundsPoints);
     const allPoints = [
         ...allPathPoints,
         ...geoJSONPoints.map(p => ({ lat: p.lat, lon: p.lon })),
@@ -683,40 +725,78 @@ function plotMultiplePathsWithGeoJSON(startLat, startLon, allSteps, colors, cont
     const scaleFactor = Math.min(svgInnerWidth, svgInnerHeight) / maxGeoRange;
 
     // Convert Geo Coordinates to SVG Pixels
+    const toSVGCoordinates = (lat, lon) => ({
+        x: (lon - minLon) * scaleFactor + svgXOffset,
+        y: svgHeight - ((lat - minLat) * scaleFactor + svgYOffset)
+    });
     const toSVGPoint = (lat, lon) => {
-        const x = (lon - minLon) * scaleFactor + svgXOffset;
-        const y = svgHeight - ((lat - minLat) * scaleFactor + svgYOffset); 
+        const { x, y } = toSVGCoordinates(lat, lon);
         return `${x.toFixed(2)},${y.toFixed(2)}`;
+    };
+    const buildRoutePath = route => {
+        const start = toSVGCoordinates(route.points[0].lat, route.points[0].lon);
+        let pathData = `M ${start.x.toFixed(3)} ${start.y.toFixed(3)}`;
+
+        route.segments.forEach(segment => {
+            if (segment.type === 'line') {
+                const end = toSVGCoordinates(segment.end.lat, segment.end.lon);
+                pathData += ` L ${end.x.toFixed(3)} ${end.y.toFixed(3)}`;
+                return;
+            }
+
+            const radiusY = segment.radius * scaleFactor * (180 / Math.PI) /
+                (3958.8 * 5280);
+            const latitudeScale = Math.max(
+                Math.abs(Math.cos(segment.center.lat * Math.PI / 180)),
+                1e-8
+            );
+            const radiusX = radiusY / latitudeScale;
+            const commandCount = Math.max(1, Math.ceil(Math.abs(segment.sweepDegrees) / 180));
+            const sweepFlag = segment.sweepDegrees > 0 ? 1 : 0;
+
+            for (let commandIndex = 1; commandIndex <= commandCount; commandIndex++) {
+                const endPoint = commandIndex === commandCount
+                    ? segment.end
+                    : calculateDestinationPoint(
+                        segment.center.lat,
+                        segment.center.lon,
+                        segment.startRadialBearing +
+                            segment.sweepDegrees * commandIndex / commandCount,
+                        segment.radius
+                    );
+                const end = toSVGCoordinates(endPoint.lat, endPoint.lon);
+                pathData += ` A ${radiusX.toFixed(3)} ${radiusY.toFixed(3)} 0 0 ${sweepFlag} ${end.x.toFixed(3)} ${end.y.toFixed(3)}`;
+            }
+        });
+
+        return pathData;
     };
 
     // --- 3. Generate SVG Markup for All Paths ---
     let pathsMarkup = '';
-    
-    allPaths.forEach((pathPoints, index) => {
+
+    allRoutes.forEach((route, index) => {
         const pathColor = colors[index] || 'black';
-        const pointsString = pathPoints.map(p => toSVGPoint(p.lat, p.lon)).join(' ');
-        
-        // Draw the polyline
         pathsMarkup += `
-            <polyline
-                points="${pointsString}"
+            <path
+                class="travel-path"
+                d="${buildRoutePath(route)}"
                 style="fill:none; stroke:${pathColor}; stroke-width:2" />
         `;
-        
-        // Draw circles at each vertex
-        pathPoints.forEach((p, pointIndex) => {
-            const svgCoords = toSVGPoint(p.lat, p.lon).split(',');
+
+        route.points.forEach((point, pointIndex) => {
+            const svgCoords = toSVGPoint(point.lat, point.lon).split(',');
             const cx = svgCoords[0];
             const cy = svgCoords[1];
             const radius = pointIndex === 0 ? 5 : 4;
             pathsMarkup += `
-            <circle class="vertex-circle" 
-                    cx="${cx}" 
-                    cy="${cy}" 
-                    r="${radius}" 
+            <circle class="vertex-circle"
+                    cx="${cx}"
+                    cy="${cy}"
+                    r="${radius}"
                     fill="${pathColor}"
-                    data-lat="${p.lat.toFixed(8)}"
-                    data-lon="${p.lon.toFixed(8)}"
+                    data-lat="${point.lat.toFixed(8)}"
+                    data-lon="${point.lon.toFixed(8)}"
                     data-path="${index + 1}"
                     data-point="${pointIndex}" />
             `;
@@ -769,15 +849,16 @@ function plotMultiplePathsWithGeoJSON(startLat, startLon, allSteps, colors, cont
     });
 
     // --- 4.5 Calculate and Display Polygon Area at Centroid ---
-    allPaths.forEach((pathPoints, index) => {
-        if (pathPoints.length >= 3) {
+    allRoutes.forEach((route, index) => {
+        const areaPoints = route.areaPoints;
+        if (areaPoints.length >= 3) {
             // Calculate area of the polygon
-            const area = calculatePolygonArea(pathPoints);
+            const area = calculatePolygonArea(areaPoints);
             const areaText = formatArea(area);
             const areaLines = areaText.split('\n');
             
             // Calculate centroid of the polygon
-            const centroid = calculatePolygonCentroid(pathPoints);
+            const centroid = calculatePolygonCentroid(areaPoints);
             const centroidSVG = toSVGPoint(centroid.lat, centroid.lon).split(',');
             const cx = parseFloat(centroidSVG[0]);
             const cy = parseFloat(centroidSVG[1]);
@@ -904,7 +985,7 @@ function plotMultiplePathsWithGeoJSON(startLat, startLon, allSteps, colors, cont
                 markerLabelOffsetX: 10,
                 markerLabelOffsetY: 4,
                 markerLabelLineSpacing: 12,
-                polylineStroke: 2,
+                travelPathStroke: 2,
                 coordinatePolygonStroke: 3,
                 measureLineStroke: 3,
                 hoverStroke: 2,
@@ -957,9 +1038,9 @@ function plotMultiplePathsWithGeoJSON(startLat, startLon, allSteps, colors, cont
                     }
                 });
                 
-                // Update polyline stroke widths
-                svg.querySelectorAll('polyline').forEach(polyline => {
-                    polyline.style.strokeWidth = baseSizes.polylineStroke * scale;
+                // Update travel path stroke widths
+                svg.querySelectorAll('.travel-path').forEach(path => {
+                    path.style.strokeWidth = baseSizes.travelPathStroke * scale;
                 });
                 
                 svg.querySelectorAll('.coordinate-polygon').forEach(polygon => {
@@ -1341,15 +1422,6 @@ function plotMultiplePathsWithGeoJSON(startLat, startLon, allSteps, colors, cont
     }
 }
 
-/**
- * Renders a geographic path (array of lat/lon points) as an SVG polyline.
- *
- * @param {Array<{lat: number, lon: number}>} pathPoints - The array of calculated path points.
- * @param {string} containerId - The ID of the HTML element where the SVG will be placed.
- * @param {number} svgWidth - The desired width of the SVG canvas.
- * @param {number} svgHeight - The desired height of the SVG canvas.
- * @param {string} pathColor - The color for the path line (default: 'blue').
- */
         // --- Example Data ---
         // Start: An arbitrary point
         let initialLat = 42.439655807;
@@ -1440,7 +1512,7 @@ window.addEventListener('load', function() {
         let nextInitialLon;
         let nextInitialLat;
         let nextTravelSteps;
-        let adjustedTravelSteps;
+        let nextRoute;
         let coordinatePolygon;
         let nextBoundsGeoJSON;
         try {
@@ -1463,10 +1535,12 @@ window.addEventListener('load', function() {
                 throw new Error('Initial Latitude must be between -90 and 90.');
             }
             nextTravelSteps = parseTravelSteps(travelStepsInput.value);
-            adjustedTravelSteps = expandTravelSteps(
+            nextRoute = calculateTravelRoute(
+                nextInitialLat,
+                nextInitialLon,
                 nextTravelSteps,
                 nextBearingAdjustment
-            ).steps;
+            );
             coordinatePolygon = coordinateInput.value.trim()
                 ? parseCoordinateRows(coordinateInput.value)
                 : [];
@@ -1478,8 +1552,8 @@ window.addEventListener('load', function() {
         }
 
         plotMultiplePathsWithGeoJSON(
-            nextInitialLat, nextInitialLon, [adjustedTravelSteps], ['red'],
-            "svg-container", 3000, 2000, [0, 0], nextBoundsGeoJSON, 'green', coordinatePolygon
+            [nextRoute], ['red'], "svg-container", 3000, 2000,
+            nextBoundsGeoJSON, 'green', coordinatePolygon
         );
 
         initialLon = nextInitialLon;
@@ -1517,25 +1591,22 @@ window.addEventListener('load', function() {
             }
 
             const parsedTravelSteps = parseTravelSteps(travelStepsInput.value);
-            const {
-                steps: adjustedTravelSteps,
-                rowStartIndexes
-            } = expandTravelSteps(parsedTravelSteps, bearingAdjustmentValue);
-            const points = calculatePath(
+            const route = calculateTravelRoute(
                 initialLatitude,
                 initialLongitude,
-                adjustedTravelSteps
+                parsedTravelSteps,
+                bearingAdjustmentValue
             );
             const remarksByPointIndex = new Map(
                 parsedTravelSteps.map((step, index) => [
-                    rowStartIndexes[index],
+                    route.rowStartIndexes[index],
                     step.remark
                 ])
             );
             const geoJSON = {
                 type: 'FeatureCollection',
                 name: 'Points Layer',
-                features: points.map((point, index) => ({
+                features: route.points.map((point, index) => ({
                     type: 'Feature',
                     properties: {
                         REMARKS: remarksByPointIndex.get(index) ?? ''
@@ -1558,7 +1629,7 @@ window.addEventListener('load', function() {
             link.click();
             link.remove();
             window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-            setStatus(`Downloaded ${points.length} coordinates as ${fileName}.`);
+            setStatus(`Downloaded ${route.points.length} coordinates as ${fileName}.`);
         } catch (error) {
             setStatus(`Unable to download GeoJSON: ${error.message}`, true);
         }
@@ -1710,7 +1781,8 @@ window.addEventListener('load', function() {
                 <p id="travel-steps-format">
                     Bearing row: bearing, distance, optional remark. Arc row: radius, arc distance,
                     CW/CCW, optional remark. Arc distance is measured along the curve; an arc follows
-                    the preceding segment's direction and must follow a bearing row.
+                    the preceding segment's direction and must follow a bearing row. A negative arc
+                    distance retraces a preceding positive arc with the same radius and direction.
                 </p>
                 <button id="download-geojson" type="button">Download GeoJSON</button>
             </div>
