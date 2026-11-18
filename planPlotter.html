@@ -187,6 +187,7 @@
             stroke-width: 1;
             rx: 4;
             ry: 4;
+            pointer-events: none;
         }
     </style>
     <script>
@@ -255,7 +256,8 @@ function parseTravelSteps(input) {
                 type: 'bearing',
                 bearingText,
                 distance,
-                remark: (bearingMatch[3] ?? '').trim()
+                remark: (bearingMatch[3] ?? '').trim(),
+                lineIndex: index
             });
             return;
         }
@@ -302,7 +304,8 @@ function parseTravelSteps(input) {
             radius,
             distance,
             direction,
-            remark: (arcMatch[4] ?? '').trim()
+            remark: (arcMatch[4] ?? '').trim(),
+            lineIndex: index
         });
     });
 
@@ -344,13 +347,15 @@ function calculateTravelRoute(startLat, startLon, travelSteps, bearingAdjustment
         segments: [],
         boundsPoints: [{ lat: startLat, lon: startLon }],
         areaPoints: [{ lat: startLat, lon: startLon }],
-        rowStartIndexes: []
+        rowStartIndexes: [],
+        rowRemarks: []
     };
     const normalizeBearing = bearing => ((bearing % 360) + 360) % 360;
     let tangentBearing = null;
 
     travelSteps.forEach((step, index) => {
         route.rowStartIndexes.push(route.points.length - 1);
+        route.rowRemarks.push(step.remark ?? '');
         const start = route.points[route.points.length - 1];
 
         if (step.type === 'bearing') {
@@ -640,6 +645,15 @@ function parseGeoJSONPoints(geoJSON) {
     return points;
 }
 
+function escapeHTMLAttribute(value) {
+    return String(value)
+        .replace(/&/g, '&amp;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+}
+
 function parseBoundsGeoJSON(input) {
     let data;
     try {
@@ -686,7 +700,8 @@ function parseBoundsGeoJSON(input) {
  */
 function plotMultiplePathsWithGeoJSON(
     allRoutes, colors, containerId, svgWidth, svgHeight,
-    geoJSON = null, geoJSONColor = 'green', coordinatePolygon = [], onGeoJSONRemarkEdit = null
+    geoJSON = null, geoJSONColor = 'green', coordinatePolygon = [],
+    onGeoJSONRemarkEdit = null, onTravelStepRemarkEdit = null
 ) {
     // Parse GeoJSON points if provided
     const geoJSONPoints = geoJSON ? parseGeoJSONPoints(geoJSON) : [];
@@ -777,6 +792,7 @@ function plotMultiplePathsWithGeoJSON(
 
     // --- 3. Generate SVG Markup for All Paths ---
     let pathsMarkup = '';
+    let routeVerticesMarkup = '';
 
     allRoutes.forEach((route, index) => {
         const pathColor = colors[index] || 'black';
@@ -792,7 +808,11 @@ function plotMultiplePathsWithGeoJSON(
             const cx = svgCoords[0];
             const cy = svgCoords[1];
             const radius = pointIndex === 0 ? 5 : 4;
-            pathsMarkup += `
+            const stepIndex = route.rowStartIndexes.indexOf(pointIndex);
+            const stepAttributes = stepIndex >= 0
+                ? `data-step-index="${stepIndex}" data-remarks="${escapeHTMLAttribute(route.rowRemarks[stepIndex])}"`
+                : '';
+            routeVerticesMarkup += `
             <circle class="vertex-circle"
                     cx="${cx}"
                     cy="${cy}"
@@ -801,7 +821,8 @@ function plotMultiplePathsWithGeoJSON(
                     data-lat="${point.lat.toFixed(8)}"
                     data-lon="${point.lon.toFixed(8)}"
                     data-path="${index + 1}"
-                    data-point="${pointIndex}" />
+                    data-point="${pointIndex}"
+                    ${stepAttributes} />
             `;
         });
     });
@@ -836,7 +857,7 @@ function plotMultiplePathsWithGeoJSON(
         const svgCoords = toSVGPoint(p.lat, p.lon).split(',');
         const cx = svgCoords[0];
         const cy = svgCoords[1];
-        const escapedRemarks = (p.remarks || '').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+        const escapedRemarks = escapeHTMLAttribute(p.remarks || '');
         pathsMarkup += `
             <circle class="geojson-point" 
                     cx="${cx}" 
@@ -851,6 +872,7 @@ function plotMultiplePathsWithGeoJSON(
                     data-index="${index}" />
         `;
     });
+    pathsMarkup += routeVerticesMarkup;
 
     // --- 4.5 Calculate and Display Polygon Area at Centroid ---
     allRoutes.forEach((route, index) => {
@@ -923,6 +945,9 @@ function plotMultiplePathsWithGeoJSON(
             document.body.appendChild(tooltip);
         }
         
+        let isRightDraggingFromRemarkPoint = false;
+        let remarkPointRightDragOccurred = false;
+
         // Add event listeners to vertex circles
         const vertexCircles = container.querySelectorAll('.vertex-circle');
         vertexCircles.forEach(circle => {
@@ -941,11 +966,28 @@ function plotMultiplePathsWithGeoJSON(
             circle.addEventListener('mouseleave', () => {
                 tooltip.style.display = 'none';
             });
+
+            circle.addEventListener('contextmenu', event => {
+                if (!circle.hasAttribute('data-step-index')) {
+                    return;
+                }
+                event.preventDefault();
+                event.stopPropagation();
+
+                if (remarkPointRightDragOccurred) {
+                    remarkPointRightDragOccurred = false;
+                    return;
+                }
+
+                const newRemark = window.prompt('Edit point remark:', circle.dataset.remarks || '');
+                if (newRemark === null) {
+                    return;
+                }
+                onTravelStepRemarkEdit?.(Number(circle.dataset.stepIndex), newRemark);
+            });
         });
         
         // Add event listeners to GeoJSON points
-        let isRightDraggingFromGeoJSONPoint = false;
-        let geoJSONPointRightDragOccurred = false;
         const geoJSONCircles = container.querySelectorAll('.geojson-point');
         geoJSONCircles.forEach(circle => {
             circle.addEventListener('mouseenter', (e) => {
@@ -977,8 +1019,8 @@ function plotMultiplePathsWithGeoJSON(
                 event.preventDefault();
                 event.stopPropagation();
 
-                if (geoJSONPointRightDragOccurred) {
-                    geoJSONPointRightDragOccurred = false;
+                if (remarkPointRightDragOccurred) {
+                    remarkPointRightDragOccurred = false;
                     return;
                 }
 
@@ -1385,9 +1427,10 @@ function plotMultiplePathsWithGeoJSON(
             
             svg.addEventListener('mousedown', (e) => {
                 if (e.button === 2) { // Right mouse button
-                    isRightDraggingFromGeoJSONPoint =
-                        Boolean(e.target.closest('.geojson-point'));
-                    geoJSONPointRightDragOccurred = false;
+                    isRightDraggingFromRemarkPoint = Boolean(e.target.closest(
+                        '.geojson-point, .vertex-circle[data-path]:not([data-path="coordinates"])'
+                    ));
+                    remarkPointRightDragOccurred = false;
                     e.preventDefault();
                     isMeasuring = true;
                     activeMeasurement = createMeasurement();
@@ -1408,12 +1451,12 @@ function plotMultiplePathsWithGeoJSON(
             svg.addEventListener('mousemove', (e) => {
                 if (!isMeasuring || !activeMeasurement) return;
                 
-                if (isRightDraggingFromGeoJSONPoint &&
+                if (isRightDraggingFromRemarkPoint &&
                     Math.hypot(
                         e.clientX - measureStartClient.x,
                         e.clientY - measureStartClient.y
                     ) > dragThreshold) {
-                    geoJSONPointRightDragOccurred = true;
+                    remarkPointRightDragOccurred = true;
                 }
                 updateMeasurement(activeMeasurement, getSVGCoords(e), e);
             });
@@ -1435,9 +1478,9 @@ function plotMultiplePathsWithGeoJSON(
                         e.clientX - measureStartClient.x,
                         e.clientY - measureStartClient.y
                     );
-                    if (isRightDraggingFromGeoJSONPoint &&
+                    if (isRightDraggingFromRemarkPoint &&
                         dragDistance > dragThreshold) {
-                        geoJSONPointRightDragOccurred = true;
+                        remarkPointRightDragOccurred = true;
                     }
                     isMeasuring = false;
                     activeMeasurement = null;
@@ -1447,7 +1490,7 @@ function plotMultiplePathsWithGeoJSON(
                     } else {
                         removeMeasurement(measurement);
                     }
-                    isRightDraggingFromGeoJSONPoint = false;
+                    isRightDraggingFromRemarkPoint = false;
                 }
             });
             
@@ -1591,7 +1634,8 @@ window.addEventListener('load', function() {
 
         plotMultiplePathsWithGeoJSON(
             [nextRoute], ['red'], "svg-container", 3000, 2000,
-            nextBoundsGeoJSON, 'green', coordinatePolygon, editGeoJSONRemark
+            nextBoundsGeoJSON, 'green', coordinatePolygon,
+            editGeoJSONRemark, editTravelStepRemark
         );
 
         initialLon = nextInitialLon;
@@ -1619,6 +1663,37 @@ window.addEventListener('load', function() {
             refreshPlot();
         } catch (error) {
             setStatus(`Unable to update point remark: ${error.message}`, true);
+        }
+    };
+
+    const editTravelStepRemark = (stepIndex, newRemark) => {
+        try {
+            if (/[\r\n]/.test(newRemark)) {
+                throw new Error('A travel-step remark must fit on one line.');
+            }
+
+            const lines = travelStepsInput.value.split(/\r?\n/);
+            const steps = parseTravelSteps(travelStepsInput.value);
+            const step = steps[stepIndex];
+            if (!step) {
+                throw new Error('The selected travel-step row could not be found.');
+            }
+
+            const remark = newRemark.trim();
+            const remarkPrefixPattern = step.type === 'bearing'
+                ? /^(\s*[NS]\s*\d+(?:\s+|:)\d+(?:\s+|:)\d+\s*[EW]"?\s*,\s*[+-]?(?:\d+(?:\.\d*)?|\.\d+))(?:\s*,\s*.*)?(\s*)$/i
+                : /^(\s*[+-]?(?:\d+(?:\.\d*)?|\.\d+)\s*,\s*[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:\s*,\s*|\s+)(?:CW|CCW))(?:\s*,\s*.*)?(\s*)$/i;
+            const rowParts = lines[step.lineIndex].match(remarkPrefixPattern);
+            if (!rowParts) {
+                throw new Error('The selected travel-step row could not be parsed.');
+            }
+
+            lines[step.lineIndex] =
+                `${rowParts[1]}${remark ? `, ${remark}` : ''}${rowParts[2]}`;
+            travelStepsInput.value = lines.join('\n');
+            refreshPlot();
+        } catch (error) {
+            setStatus(`Unable to update travel-step remark: ${error.message}`, true);
         }
     };
 
