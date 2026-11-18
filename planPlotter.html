@@ -618,21 +618,21 @@ function parseCoordinateRows(input) {
  * Parses a GeoJSON FeatureCollection and extracts Point features.
  *
  * @param {string|Object} geoJSON - GeoJSON string or object.
- * @returns {Array<{lat: number, lon: number, remarks: string}>} - Array of point objects.
+ * @returns {Array<{lat: number, lon: number, remarks: string, featureIndex: number}>} - Array of point objects.
  */
 function parseGeoJSONPoints(geoJSON) {
     const data = typeof geoJSON === 'string' ? JSON.parse(geoJSON) : geoJSON;
     const points = [];
     
     if (data.type === 'FeatureCollection' && Array.isArray(data.features)) {
-        data.features.forEach(feature => {
+        data.features.forEach((feature, featureIndex) => {
             if (feature?.type === 'Feature' &&
                 feature.geometry &&
                 feature.geometry.type === 'Point' &&
                 Array.isArray(feature.geometry.coordinates)) {
                 const [lon, lat, elevation] = feature.geometry.coordinates;
                 const remarks = feature.properties?.REMARKS || '';
-                points.push({ lat, lon, elevation, remarks: String(remarks) });
+                points.push({ lat, lon, elevation, remarks: String(remarks), featureIndex });
             }
         });
     }
@@ -684,7 +684,10 @@ function parseBoundsGeoJSON(input) {
  * @param {number} svgWidth - Width of the SVG canvas.
  * @param {number} svgHeight - Height of the SVG canvas.
  */
-function plotMultiplePathsWithGeoJSON(allRoutes, colors, containerId, svgWidth, svgHeight, geoJSON = null, geoJSONColor = 'green', coordinatePolygon = []) {
+function plotMultiplePathsWithGeoJSON(
+    allRoutes, colors, containerId, svgWidth, svgHeight,
+    geoJSON = null, geoJSONColor = 'green', coordinatePolygon = [], onGeoJSONRemarkEdit = null
+) {
     // Parse GeoJSON points if provided
     const geoJSONPoints = geoJSON ? parseGeoJSONPoints(geoJSON) : [];
     
@@ -844,6 +847,7 @@ function plotMultiplePathsWithGeoJSON(allRoutes, colors, containerId, svgWidth, 
                     data-lon="${p.lon.toFixed(8)}"
                     data-elevation="${p.elevation ? p.elevation.toFixed(3) : ''}"
                     data-remarks="${escapedRemarks}"
+                    data-feature-index="${p.featureIndex}"
                     data-index="${index}" />
         `;
     });
@@ -940,6 +944,8 @@ function plotMultiplePathsWithGeoJSON(allRoutes, colors, containerId, svgWidth, 
         });
         
         // Add event listeners to GeoJSON points
+        let isRightDraggingFromGeoJSONPoint = false;
+        let geoJSONPointRightDragOccurred = false;
         const geoJSONCircles = container.querySelectorAll('.geojson-point');
         geoJSONCircles.forEach(circle => {
             circle.addEventListener('mouseenter', (e) => {
@@ -965,6 +971,23 @@ function plotMultiplePathsWithGeoJSON(allRoutes, colors, containerId, svgWidth, 
             
             circle.addEventListener('mouseleave', () => {
                 tooltip.style.display = 'none';
+            });
+
+            circle.addEventListener('contextmenu', event => {
+                event.preventDefault();
+                event.stopPropagation();
+
+                if (geoJSONPointRightDragOccurred) {
+                    geoJSONPointRightDragOccurred = false;
+                    return;
+                }
+
+                const featureIndex = Number(circle.dataset.featureIndex);
+                const newRemark = window.prompt('Edit point remark:', circle.dataset.remarks || '');
+                if (newRemark === null) {
+                    return;
+                }
+                onGeoJSONRemarkEdit?.(featureIndex, newRemark);
             });
         });
         
@@ -1362,6 +1385,9 @@ function plotMultiplePathsWithGeoJSON(allRoutes, colors, containerId, svgWidth, 
             
             svg.addEventListener('mousedown', (e) => {
                 if (e.button === 2) { // Right mouse button
+                    isRightDraggingFromGeoJSONPoint =
+                        Boolean(e.target.closest('.geojson-point'));
+                    geoJSONPointRightDragOccurred = false;
                     e.preventDefault();
                     isMeasuring = true;
                     activeMeasurement = createMeasurement();
@@ -1382,6 +1408,13 @@ function plotMultiplePathsWithGeoJSON(allRoutes, colors, containerId, svgWidth, 
             svg.addEventListener('mousemove', (e) => {
                 if (!isMeasuring || !activeMeasurement) return;
                 
+                if (isRightDraggingFromGeoJSONPoint &&
+                    Math.hypot(
+                        e.clientX - measureStartClient.x,
+                        e.clientY - measureStartClient.y
+                    ) > dragThreshold) {
+                    geoJSONPointRightDragOccurred = true;
+                }
                 updateMeasurement(activeMeasurement, getSVGCoords(e), e);
             });
             
@@ -1402,6 +1435,10 @@ function plotMultiplePathsWithGeoJSON(allRoutes, colors, containerId, svgWidth, 
                         e.clientX - measureStartClient.x,
                         e.clientY - measureStartClient.y
                     );
+                    if (isRightDraggingFromGeoJSONPoint &&
+                        dragDistance > dragThreshold) {
+                        geoJSONPointRightDragOccurred = true;
+                    }
                     isMeasuring = false;
                     activeMeasurement = null;
                     if (dragDistance > dragThreshold) {
@@ -1410,6 +1447,7 @@ function plotMultiplePathsWithGeoJSON(allRoutes, colors, containerId, svgWidth, 
                     } else {
                         removeMeasurement(measurement);
                     }
+                    isRightDraggingFromGeoJSONPoint = false;
                 }
             });
             
@@ -1553,7 +1591,7 @@ window.addEventListener('load', function() {
 
         plotMultiplePathsWithGeoJSON(
             [nextRoute], ['red'], "svg-container", 3000, 2000,
-            nextBoundsGeoJSON, 'green', coordinatePolygon
+            nextBoundsGeoJSON, 'green', coordinatePolygon, editGeoJSONRemark
         );
 
         initialLon = nextInitialLon;
@@ -1563,6 +1601,25 @@ window.addEventListener('load', function() {
             ? `Plotted ${nextTravelSteps.length} travel steps and a polygon with ${coordinatePolygon.length} points.`
             : `Plotted ${nextTravelSteps.length} travel steps.`;
         coordinateStatus.dataset.error = 'false';
+    };
+
+    const editGeoJSONRemark = (featureIndex, newRemark) => {
+        try {
+            const geoJSON = JSON.parse(boundsGeoJSONInput.value);
+            const feature = geoJSON.features?.[featureIndex];
+            if (!feature || feature.geometry?.type !== 'Point') {
+                throw new Error('The selected GeoJSON point could not be found.');
+            }
+            if (!feature.properties || typeof feature.properties !== 'object' ||
+                Array.isArray(feature.properties)) {
+                feature.properties = {};
+            }
+            feature.properties.REMARKS = newRemark;
+            boundsGeoJSONInput.value = JSON.stringify(geoJSON, null, 4);
+            refreshPlot();
+        } catch (error) {
+            setStatus(`Unable to update point remark: ${error.message}`, true);
+        }
     };
 
     document.getElementById('download-geojson').addEventListener('click', () => {
