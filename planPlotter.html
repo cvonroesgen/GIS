@@ -701,7 +701,7 @@ function parseBoundsGeoJSON(input) {
 function plotMultiplePathsWithGeoJSON(
     allRoutes, colors, containerId, svgWidth, svgHeight,
     geoJSON = null, geoJSONColor = 'green', coordinatePolygon = [],
-    onGeoJSONRemarkEdit = null, onTravelStepRemarkEdit = null
+    onGeoJSONRemarkEdit = null, onTravelStepRemarkEdit = null, drawnPoints = []
 ) {
     // Parse GeoJSON points if provided
     const geoJSONPoints = geoJSON ? parseGeoJSONPoints(geoJSON) : [];
@@ -711,7 +711,8 @@ function plotMultiplePathsWithGeoJSON(
     const allPoints = [
         ...allPathPoints,
         ...geoJSONPoints.map(p => ({ lat: p.lat, lon: p.lon })),
-        ...coordinatePolygon.map(p => ({ lat: p.lat, lon: p.lon }))
+        ...coordinatePolygon.map(p => ({ lat: p.lat, lon: p.lon })),
+        ...drawnPoints.map(p => ({ lat: p.lat, lon: p.lon }))
     ];
     
     if (allPoints.length < 1) {
@@ -945,8 +946,7 @@ function plotMultiplePathsWithGeoJSON(
             document.body.appendChild(tooltip);
         }
         
-        let isRightDraggingFromRemarkPoint = false;
-        let remarkPointRightDragOccurred = false;
+        let rightMouseDragOccurred = false;
 
         // Add event listeners to vertex circles
         const vertexCircles = container.querySelectorAll('.vertex-circle');
@@ -974,8 +974,8 @@ function plotMultiplePathsWithGeoJSON(
                 event.preventDefault();
                 event.stopPropagation();
 
-                if (remarkPointRightDragOccurred) {
-                    remarkPointRightDragOccurred = false;
+                if (rightMouseDragOccurred) {
+                    rightMouseDragOccurred = false;
                     return;
                 }
 
@@ -1019,8 +1019,8 @@ function plotMultiplePathsWithGeoJSON(
                 event.preventDefault();
                 event.stopPropagation();
 
-                if (remarkPointRightDragOccurred) {
-                    remarkPointRightDragOccurred = false;
+                if (rightMouseDragOccurred) {
+                    rightMouseDragOccurred = false;
                     return;
                 }
 
@@ -1203,19 +1203,21 @@ function plotMultiplePathsWithGeoJSON(
             svg.appendChild(markersGroup);
             let markerCount = 0;
 
-            const createUserMarker = (coords) => {
-                const geo = toGeoCoords(coords.x, coords.y);
+            const addUserMarker = point => {
                 markerCount++;
 
+                point.remark = point.remark ?? '';
                 const currentScale = viewBox.w / originalViewBox.w;
+                const coords = toSVGCoordinates(point.lat, point.lon);
                 const marker = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
                 marker.classList.add('clicked-marker');
                 marker.setAttribute('cx', coords.x);
                 marker.setAttribute('cy', coords.y);
                 marker.setAttribute('r', baseSizes.clickedMarker * currentScale);
-                marker.setAttribute('data-lat', geo.lat.toFixed(8));
-                marker.setAttribute('data-lon', geo.lon.toFixed(8));
+                marker.setAttribute('data-lat', point.lat.toFixed(8));
+                marker.setAttribute('data-lon', point.lon.toFixed(8));
                 marker.setAttribute('data-id', markerCount);
+                marker.dataset.remarks = point.remark;
 
                 const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
                 label.classList.add('marker-label');
@@ -1227,16 +1229,64 @@ function plotMultiplePathsWithGeoJSON(
                     'y',
                     coords.y + baseSizes.markerLabelOffsetY * currentScale
                 );
-                label.innerHTML = `Lat: ${geo.lat.toFixed(6)}<tspan x="${labelX}" dy="${baseSizes.markerLabelLineSpacing * currentScale}">Lon: ${geo.lon.toFixed(6)}</tspan>`;
+                label.innerHTML = `Lat: ${point.lat.toFixed(6)}<tspan x="${labelX}" dy="${baseSizes.markerLabelLineSpacing * currentScale}">Lon: ${point.lon.toFixed(6)}</tspan>`;
 
                 markersGroup.appendChild(marker);
                 markersGroup.appendChild(label);
 
                 marker.addEventListener('click', (evt) => {
                     evt.stopPropagation();
-                    markersGroup.removeChild(marker);
-                    markersGroup.removeChild(label);
+                    const pointIndex = drawnPoints.indexOf(point);
+                    if (pointIndex !== -1) {
+                        drawnPoints.splice(pointIndex, 1);
+                    }
+                    marker.remove();
+                    label.remove();
                 });
+
+                marker.addEventListener('contextmenu', event => {
+                    event.preventDefault();
+                    event.stopPropagation();
+
+                    if (rightMouseDragOccurred) {
+                        rightMouseDragOccurred = false;
+                        return;
+                    }
+
+                    const newRemark = window.prompt('Edit point remark:', point.remark);
+                    if (newRemark === null) {
+                        return;
+                    }
+                    point.remark = newRemark;
+                    marker.dataset.remarks = newRemark;
+                });
+
+                marker.addEventListener('mouseenter', event => {
+                    let html = `Lat: ${point.lat.toFixed(8)}<br>Lon: ${point.lon.toFixed(8)}`;
+                    if (point.remark) {
+                        html += `<br>Remarks: ${escapeHTMLAttribute(point.remark)}`;
+                    }
+                    tooltip.innerHTML = html;
+                    tooltip.style.display = 'block';
+                });
+
+                marker.addEventListener('mousemove', event => {
+                    tooltip.style.left = `${event.pageX + 15}px`;
+                    tooltip.style.top = `${event.pageY + 15}px`;
+                });
+
+                marker.addEventListener('mouseleave', () => {
+                    tooltip.style.display = 'none';
+                });
+            };
+
+            drawnPoints.forEach(addUserMarker);
+
+            const createUserMarker = coords => {
+                const geo = toGeoCoords(coords.x, coords.y);
+                const point = { lat: geo.lat, lon: geo.lon, remark: '' };
+                drawnPoints.push(point);
+                addUserMarker(point);
             };
             
             svg.addEventListener('mousedown', (e) => {
@@ -1427,10 +1477,7 @@ function plotMultiplePathsWithGeoJSON(
             
             svg.addEventListener('mousedown', (e) => {
                 if (e.button === 2) { // Right mouse button
-                    isRightDraggingFromRemarkPoint = Boolean(e.target.closest(
-                        '.geojson-point, .vertex-circle[data-path]:not([data-path="coordinates"])'
-                    ));
-                    remarkPointRightDragOccurred = false;
+                    rightMouseDragOccurred = false;
                     e.preventDefault();
                     isMeasuring = true;
                     activeMeasurement = createMeasurement();
@@ -1451,12 +1498,11 @@ function plotMultiplePathsWithGeoJSON(
             svg.addEventListener('mousemove', (e) => {
                 if (!isMeasuring || !activeMeasurement) return;
                 
-                if (isRightDraggingFromRemarkPoint &&
-                    Math.hypot(
+                if (Math.hypot(
                         e.clientX - measureStartClient.x,
                         e.clientY - measureStartClient.y
                     ) > dragThreshold) {
-                    remarkPointRightDragOccurred = true;
+                    rightMouseDragOccurred = true;
                 }
                 updateMeasurement(activeMeasurement, getSVGCoords(e), e);
             });
@@ -1478,9 +1524,8 @@ function plotMultiplePathsWithGeoJSON(
                         e.clientX - measureStartClient.x,
                         e.clientY - measureStartClient.y
                     );
-                    if (isRightDraggingFromRemarkPoint &&
-                        dragDistance > dragThreshold) {
-                        remarkPointRightDragOccurred = true;
+                    if (dragDistance > dragThreshold) {
+                        rightMouseDragOccurred = true;
                     }
                     isMeasuring = false;
                     activeMeasurement = null;
@@ -1490,7 +1535,6 @@ function plotMultiplePathsWithGeoJSON(
                     } else {
                         removeMeasurement(measurement);
                     }
-                    isRightDraggingFromRemarkPoint = false;
                 }
             });
             
@@ -1525,6 +1569,7 @@ window.addEventListener('load', function() {
     const newSettingsKeyInput = document.getElementById('new-settings-key');
     const existingSettingsKeySelect = document.getElementById('existing-settings-key');
     const saveDialogStatus = document.getElementById('save-dialog-status');
+    const drawnPoints = [];
 
     const setStatus = (message, isError = false) => {
         coordinateStatus.textContent = message;
@@ -1635,7 +1680,7 @@ window.addEventListener('load', function() {
         plotMultiplePathsWithGeoJSON(
             [nextRoute], ['red'], "svg-container", 3000, 2000,
             nextBoundsGeoJSON, 'green', coordinatePolygon,
-            editGeoJSONRemark, editTravelStepRemark
+            editGeoJSONRemark, editTravelStepRemark, drawnPoints
         );
 
         initialLon = nextInitialLon;
@@ -1764,6 +1809,37 @@ window.addEventListener('load', function() {
             setStatus(`Downloaded ${route.points.length} coordinates as ${fileName}.`);
         } catch (error) {
             setStatus(`Unable to download GeoJSON: ${error.message}`, true);
+        }
+    });
+
+    document.getElementById('download-drawn-points').addEventListener('click', () => {
+        try {
+            const geoJSON = {
+                type: 'FeatureCollection',
+                name: 'Drawn Points',
+                features: drawnPoints.map(point => ({
+                    type: 'Feature',
+                    properties: { REMARKS: point.remark },
+                    geometry: {
+                        type: 'Point',
+                        coordinates: [point.lon, point.lat, 0]
+                    }
+                }))
+            };
+            const geoJSONText = `${JSON.stringify(geoJSON, null, 4)}\r\n`;
+            const url = URL.createObjectURL(
+                new Blob([geoJSONText], { type: 'application/geo+json;charset=utf-8' })
+            );
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = 'drawn-points.geojson';
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+            window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+            setStatus(`Downloaded ${drawnPoints.length} drawn points as drawn-points.geojson.`);
+        } catch (error) {
+            setStatus(`Unable to download drawn points: ${error.message}`, true);
         }
     });
 
@@ -1995,6 +2071,7 @@ window.addEventListener('load', function() {
             </select>
             <button id="load-settings-button" type="button">Load</button>
             <button id="open-save-dialog-button" type="button">Save</button>
+            <button id="download-drawn-points" type="button">Download drawn points</button>
         </div>
         <p id="coordinate-polygon-status" role="status" aria-live="polite"></p>
     </section>
