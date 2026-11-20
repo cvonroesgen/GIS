@@ -234,7 +234,7 @@ function parseTravelSteps(input) {
     const steps = [];
 
     input.split(/\r?\n/).forEach((line, index) => {
-        if (!line.trim()) {
+        if (!line.trim() || isCommentLine(line)) {
             return;
         }
 
@@ -314,6 +314,14 @@ function parseTravelSteps(input) {
     }
 
     return steps;
+}
+
+function isCommentLine(line) {
+    return line.trimStart().startsWith('#');
+}
+
+function stripCommentLines(input) {
+    return input.split(/\r?\n/).filter(line => !isCommentLine(line)).join('\n');
 }
 
 function calculateDestinationPoint(startLat, startLon, bearingDegrees, distanceFeet) {
@@ -581,7 +589,7 @@ function parseCoordinateRows(input) {
     const decimalPattern = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/;
 
     input.split(/\r?\n/).forEach((line, index) => {
-        if (!line.trim()) {
+        if (!line.trim() || isCommentLine(line)) {
             return;
         }
 
@@ -626,7 +634,9 @@ function parseCoordinateRows(input) {
  * @returns {Array<{lat: number, lon: number, remarks: string, featureIndex: number}>} - Array of point objects.
  */
 function parseGeoJSONPoints(geoJSON) {
-    const data = typeof geoJSON === 'string' ? JSON.parse(geoJSON) : geoJSON;
+    const data = typeof geoJSON === 'string'
+        ? JSON.parse(stripCommentLines(geoJSON))
+        : geoJSON;
     const points = [];
     
     if (data.type === 'FeatureCollection' && Array.isArray(data.features)) {
@@ -657,7 +667,7 @@ function escapeHTMLAttribute(value) {
 function parseBoundsGeoJSON(input) {
     let data;
     try {
-        data = JSON.parse(input);
+        data = JSON.parse(stripCommentLines(input));
     } catch {
         throw new Error('Boundary GeoJSON must be valid JSON.');
     }
@@ -1667,7 +1677,8 @@ window.addEventListener('load', function() {
                 nextTravelSteps,
                 nextBearingAdjustment
             );
-            coordinatePolygon = coordinateInput.value.trim()
+            coordinatePolygon = coordinateInput.value.split(/\r?\n/)
+                .some(line => line.trim() && !isCommentLine(line))
                 ? parseCoordinateRows(coordinateInput.value)
                 : [];
             nextBoundsGeoJSON = parseBoundsGeoJSON(boundsGeoJSONInput.value);
@@ -1694,7 +1705,9 @@ window.addEventListener('load', function() {
 
     const editGeoJSONRemark = (featureIndex, newRemark) => {
         try {
-            const geoJSON = JSON.parse(boundsGeoJSONInput.value);
+            const inputLines = boundsGeoJSONInput.value.split(/\r?\n/);
+            const commentLines = inputLines.filter(isCommentLine);
+            const geoJSON = JSON.parse(stripCommentLines(boundsGeoJSONInput.value));
             const feature = geoJSON.features?.[featureIndex];
             if (!feature || feature.geometry?.type !== 'Point') {
                 throw new Error('The selected GeoJSON point could not be found.');
@@ -1704,7 +1717,10 @@ window.addEventListener('load', function() {
                 feature.properties = {};
             }
             feature.properties.REMARKS = newRemark;
-            boundsGeoJSONInput.value = JSON.stringify(geoJSON, null, 4);
+            const updatedGeoJSON = JSON.stringify(geoJSON, null, 4);
+            boundsGeoJSONInput.value = commentLines.length
+                ? `${commentLines.join('\n')}\n${updatedGeoJSON}`
+                : updatedGeoJSON;
             refreshPlot();
         } catch (error) {
             setStatus(`Unable to update point remark: ${error.message}`, true);
@@ -1948,10 +1964,14 @@ window.addEventListener('load', function() {
     <h1>Plan Plotter</h1>
     <section id="coordinate-polygon-controls" aria-labelledby="coordinate-polygon-heading">
         <h2 id="coordinate-polygon-heading">Compare Google Maps. Surveyor Plan and GNSS RTK Points</h2>
+        <p id="comment-line-format">
+            In any of these textareas, lines whose first non-whitespace character is # are ignored as comments.
+        </p>
         <div class="coordinate-inputs">
             <div class="coordinate-input-group">
                 <label for="coordinate-polygon-input">Google Maps or Municipal GIS (longitude, latitude per line):</label>
-                <textarea id="coordinate-polygon-input" rows="8" placeholder="">-71.1555172, 42.4396526
+                <textarea id="coordinate-polygon-input" rows="8" placeholder=""
+                    aria-describedby="comment-line-format">-71.1555172, 42.4396526
                     -71.155992728, 42.440247121
                     -71.15603184,42.4403281
                     -71.1564898, 42.4402085
@@ -1978,7 +1998,8 @@ window.addEventListener('load', function() {
                     <input id="bearing-adjustment-input" type="number" step="any" value="-14.05">
                 </div>
                 <label for="travel-steps-input">Surveyor Plan (bearing/distance or circular path per line):</label>
-                <textarea id="travel-steps-input" rows="8" aria-describedby="travel-steps-format">S 20 41 10 E, 238.64
+                <textarea id="travel-steps-input" rows="8"
+                    aria-describedby="travel-steps-format comment-line-format">S 20 41 10 E, 238.64
                     S 8 14 52 E, 39.5
                     N 81 45 8 E, 120.33
                     S 72 4 14 E, 106.47
@@ -1996,7 +2017,8 @@ window.addEventListener('load', function() {
             </div>
             <div class="coordinate-input-group">
                 <label for="bounds-geojson-input">GeoJSON from GNSS RTK:</label>
-                <textarea id="bounds-geojson-input" rows="20" spellcheck="false">{
+                <textarea id="bounds-geojson-input" rows="20" spellcheck="false"
+                    aria-describedby="comment-line-format">{
     "type": "FeatureCollection",
     "name": "Points Layer",
     "features": [
